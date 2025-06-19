@@ -2,10 +2,8 @@
 
 import { RealtimeChannel } from "@supabase/supabase-js";
 
-// The screen currently being displayed (menu, lobby, game, etc.)
 export type GameScreen = 'menu' | 'playing' | 'gameOver' | 'leaderboard' | 'multiplayerLobby' | 'multiplayerGame';
 
-// Settings for a multiplayer match, configured by the host
 export interface GameSettings {
   enemyCount: number;
   enemySpeed: number;
@@ -13,7 +11,6 @@ export interface GameSettings {
   gameMode: 'survival' | 'team-vs-enemies' | 'team-vs-team';
 }
 
-// State for the main Game UI, passed from GameCanvas to the game loop
 export interface GameUIState {
   timeLeft: number;
   gunLevel: number;
@@ -27,7 +24,6 @@ export interface GameUIState {
   teamScores: { red: number; blue: number };
 }
 
-// Represents a player in the game
 export interface Player {
     id: string;
     x: number;
@@ -41,7 +37,6 @@ export interface Player {
     role?: 'host' | 'player';
 }
 
-// Represents an enemy
 export interface Enemy {
     x: number;
     y: number;
@@ -49,24 +44,24 @@ export interface Enemy {
     speed: number;
     health: number;
     maxHealth: number;
-    isBoss: boolean; // <-- ADD THIS
-    darkness: number; // <-- ADD THIS
+    isBoss: boolean;
+    darkness: number;
+    vx: number; // <-- For physics-based movement
+    vy: number; // <-- For physics-based movement
 }
 
-// Represents a bullet
 export interface Bullet {
     x: number;
     y: number;
     size: number;
-    speed: number;
-    angle: number;
     damage: number;
     playerId: string;
     team?: 'red' | 'blue';
-    color: string; // <-- ADD THIS
+    color: string;
+    vx: number; // <-- Use velocity instead of angle/speed
+    vy: number; // <-- Use velocity instead of angle/speed
 }
 
-// The core data managed inside the game loop
 export interface GameData {
     player: Player;
     otherPlayers: Player[];
@@ -77,5 +72,6 @@ export interface GameData {
     lastShot: number;
     lastEnemySpawn: number;
     lastBossSpawn: number;
-    gameMode: GameSettings['gameMode']; // <-- ADD THIS
+    gameMode: GameSettings['gameMode'];
+    gameStartTime: number; // <-- Make sure this is here
 }
