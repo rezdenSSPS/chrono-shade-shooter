@@ -1,5 +1,3 @@
-// src/types.ts (Updated)
-
 import { RealtimeChannel } from "@supabase/supabase-js";
 
 export type GameScreen = 'menu' | 'playing' | 'gameOver' | 'leaderboard' | 'multiplayerLobby' | 'multiplayerGame';
@@ -28,6 +26,8 @@ export interface Player {
     id: string;
     x: number;
     y: number;
+    targetX: number;
+    targetY: number;
     size: number;
     health: number;
     maxHealth: number;
@@ -46,8 +46,8 @@ export interface Enemy {
     maxHealth: number;
     isBoss: boolean;
     darkness: number;
-    vx: number; // <-- For physics-based movement
-    vy: number; // <-- For physics-based movement
+    vx: number;
+    vy: number;
 }
 
 export interface Bullet {
@@ -58,8 +58,8 @@ export interface Bullet {
     playerId: string;
     team?: 'red' | 'blue';
     color: string;
-    vx: number; // <-- Use velocity instead of angle/speed
-    vy: number; // <-- Use velocity instead of angle/speed
+    vx: number;
+    vy: number;
 }
 
 export interface GameData {
@@ -73,5 +73,5 @@ export interface GameData {
     lastEnemySpawn: number;
     lastBossSpawn: number;
     gameMode: GameSettings['gameMode'];
-    gameStartTime: number; // <-- Make sure this is here
+    gameStartTime: number;
 }
