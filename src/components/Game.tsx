@@ -6,13 +6,14 @@ import MainMenu from './MainMenu';
 import MultiplayerLobby from './MultiplayerLobby';
 import { supabase } from '@/integrations/supabase/client';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import type { GameScreen, GameSettings, Player } from '@/types'; // Use the new types file
+import type { GameScreen, GameSettings, Player } from '@/types';
 
 const Game = () => {
   const [gameScreen, setGameScreen] = useState<GameScreen>('menu');
   const [finalScore, setFinalScore] = useState(0);
   const [lobbyCode, setLobbyCode] = useState('');
   const [isHost, setIsHost] = useState(false);
+  const [wasMultiplayer, setWasMultiplayer] = useState(false);
   const [connectedPlayers, setConnectedPlayers] = useState<Player[]>([]);
   const [gameSettings, setGameSettings] = useState<GameSettings>({
     enemyCount: 5,
@@ -32,18 +33,26 @@ const Game = () => {
     setConnectedPlayers([]);
     setLobbyCode('');
     setIsHost(false);
+    setWasMultiplayer(false);
   }, []);
 
   const handleStartGame = (code: string, settings: GameSettings) => {
     setLobbyCode(code);
     setGameSettings(settings);
+    setWasMultiplayer(true); // Mark this session as multiplayer
     setGameScreen('multiplayerGame');
   };
   
   const setupChannel = (code: string) => {
-    cleanupChannel();
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+    }
     const channelName = `game-lobby-${code}`;
-    const channel = supabase.channel(channelName);
+    const channel = supabase.channel(channelName, {
+        config: {
+            presence: { key: playerIdRef.current }
+        }
+    });
 
     channel
       .on('presence', { event: 'sync' }, () => {
@@ -55,6 +64,7 @@ const Game = () => {
             role: p.role,
             team: p.team,
             x: 0, y: 0, size: 20, health: 100, maxHealth: 100, isAlive: true, kills: 0,
+            targetX: 0, targetY: 0,
           }));
         setConnectedPlayers(players);
       })
@@ -62,7 +72,9 @@ const Game = () => {
         handleStartGame(code, payload.payload.settings);
       })
       .on('broadcast', { event: 'settings-update' }, (payload) => {
-        setGameSettings(payload.payload.settings);
+        if (!isHost) { // Clients update their settings from the host
+            setGameSettings(payload.payload.settings);
+        }
       });
 
     channelRef.current = channel;
@@ -73,27 +85,27 @@ const Game = () => {
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
     const channel = setupChannel(code);
     
+    setIsHost(true);
+    setLobbyCode(code);
+
     channel.subscribe((status) => {
       if (status === 'SUBSCRIBED') {
         channel.track({ user_id: playerIdRef.current, role: 'host' });
       }
     });
-
-    setIsHost(true);
-    setLobbyCode(code);
   };
 
   const joinLobby = (code: string) => {
     const channel = setupChannel(code);
+    
+    setIsHost(false);
+    setLobbyCode(code);
     
     channel.subscribe((status) => {
       if (status === 'SUBSCRIBED') {
         channel.track({ user_id: playerIdRef.current, role: 'player' });
       }
     });
-
-    setIsHost(false);
-    setLobbyCode(code);
   };
 
   const updateGameSettings = (newSettings: GameSettings) => {
@@ -115,23 +127,24 @@ const Game = () => {
         payload: { settings: gameSettings }
       });
     }
-    // Host also starts their own game
-    handleStartGame(lobbyCode, gameSettings);
   };
 
-  const backToMenu = () => {
-    cleanupChannel();
-    setGameScreen('menu');
+  const backToLobbyOrMenu = () => {
+    setFinalScore(0);
+    if (wasMultiplayer) {
+      setGameScreen('multiplayerLobby');
+    } else {
+      cleanupChannel();
+      setGameScreen('menu');
+    }
   };
 
   const endGame = (score: number) => {
     setFinalScore(score);
     setGameScreen('gameOver');
-    cleanupChannel(); // Clean up channel after game ends
   };
 
   useEffect(() => {
-    // Ensure cleanup is called on component unmount
     return () => cleanupChannel();
   }, [cleanupChannel]);
 
@@ -139,14 +152,17 @@ const Game = () => {
     <div className="min-h-screen bg-black flex items-center justify-center">
       {gameScreen === 'menu' && (
         <MainMenu 
-          onStartGame={() => setGameScreen('playing')} 
+          onStartGame={() => { setWasMultiplayer(false); setGameScreen('playing'); }}
           onShowLeaderboard={() => setGameScreen('leaderboard')}
           onStartMultiplayer={() => setGameScreen('multiplayerLobby')}
         />
       )}
       
       {gameScreen === 'playing' && (
-        <GameCanvas onGameEnd={endGame} gameSettings={{ gameMode: 'survival', enemyCount: 1, enemySpeed: 1, enemyDamage: 1 }} />
+        <GameCanvas 
+          onGameEnd={endGame} 
+          gameSettings={{ gameMode: 'survival', enemyCount: 1, enemySpeed: 1, enemyDamage: 1 }}
+        />
       )}
       
       {gameScreen === 'multiplayerLobby' && (
@@ -159,7 +175,7 @@ const Game = () => {
           onJoinLobby={joinLobby}
           onUpdateSettings={updateGameSettings}
           onStartGame={startMultiplayerGame}
-          onBackToMenu={backToMenu}
+          onBackToMenu={() => { cleanupChannel(); setGameScreen('menu'); }}
         />
       )}
       
@@ -167,6 +183,7 @@ const Game = () => {
         <GameCanvas 
           onGameEnd={endGame} 
           isMultiplayer={true}
+          isHost={isHost}
           lobbyCode={lobbyCode}
           gameSettings={gameSettings}
           channel={channelRef.current}
@@ -177,13 +194,13 @@ const Game = () => {
       {gameScreen === 'gameOver' && (
         <GameOverScreen 
           score={finalScore} 
-          onBackToMenu={backToMenu}
+          onBackToMenu={backToLobbyOrMenu}
           onShowLeaderboard={() => setGameScreen('leaderboard')}
         />
       )}
       
       {gameScreen === 'leaderboard' && (
-        <LeaderboardScreen onBackToMenu={backToMenu} />
+        <LeaderboardScreen onBackToMenu={() => setGameScreen('menu')} />
       )}
     </div>
   );
