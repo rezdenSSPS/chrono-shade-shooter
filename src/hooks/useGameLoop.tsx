@@ -43,10 +43,10 @@ const useGameLoop = (
     lastBossSpawn: 0,
     gameStartTime: Date.now(),
     isHost: isHost,
-    lastEnemySync: 0,
+    lastSyncTime: 0,
     multiplayerChannel: null,
     gameMode: gameSettings?.gameMode || 'survival',
-    playerId: '' // Will be set from player.id
+    playerId: ''
   });
   gameDataRef.current.playerId = gameDataRef.current.player.id;
 
@@ -57,317 +57,177 @@ const useGameLoop = (
     setGameState(currentState => {
         const newState = typeof updater === 'function' ? updater(currentState) : updater;
         const channel = gameDataRef.current.multiplayerChannel;
-
-        if (channel && JSON.stringify(currentState) !== JSON.stringify(newState)) {
+        if (channel && isHost && JSON.stringify(currentState) !== JSON.stringify(newState)) {
             try {
-                channel.send({
-                    type: 'broadcast',
-                    event: 'game-state-update',
-                    payload: { newState }
-                });
+                channel.send({ type: 'broadcast', event: 'game-state-update', payload: { newState } });
             } catch (e) {
-                console.error("Broadcast game-state-update failed", e)
+                console.error("Broadcast game-state-update failed", e);
             }
         }
         return newState;
     });
-  }, [setGameState]);
+  }, [setGameState, isHost]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    gameDataRef.current.gameStartTime = gameState.gameStartTime;
-    gameDataRef.current.gameMode = gameSettings?.gameMode || 'survival';
-    gameDataRef.current.isHost = isHost;
+    const gameData = gameDataRef.current;
+    gameData.gameStartTime = gameState.gameStartTime;
+    gameData.gameMode = gameSettings?.gameMode || 'survival';
+    gameData.isHost = isHost;
     
-    // Initialize player based on game mode
+    // Player setup
     if (gameSettings?.gameMode === 'team-vs-team') {
-      // Assign random team
-      gameDataRef.current.player.team = Math.random() < 0.5 ? 'red' : 'blue';
-      gameDataRef.current.player.health = 100;
-      gameDataRef.current.player.maxHealth = 100;
-      
-      // Initialize team scores
-      setGameState(prev => ({
-        ...prev,
-        teamScores: { red: 0, blue: 0 }
-      }));
+      gameData.player.team = Math.random() < 0.5 ? 'red' : 'blue';
     } else if (gameSettings?.gameMode === 'team-vs-enemies') {
-      gameDataRef.current.player.team = 'blue'; // All players on same team vs enemies
-      gameDataRef.current.player.health = 100;
-      gameDataRef.current.player.maxHealth = 100;
-      
-      setGameState(prev => ({
-        ...prev,
-        teamScores: { red: 0, blue: 0 }
-      }));
+      gameData.player.team = 'blue';
     }
 
-    gameDataRef.current.player.x = window.innerWidth / 2;
-    gameDataRef.current.player.y = window.innerHeight / 2;
-
-    // Setup multiplayer if needed
+    // Multiplayer setup
     if (isMultiplayer && lobbyCode && !channelRef.current) {
-      const channelName = `game-lobby-${lobbyCode}`;
-      
-      // Remove any existing channel first
-      if (gameDataRef.current.multiplayerChannel) {
-        supabase.removeChannel(gameDataRef.current.multiplayerChannel);
-        gameDataRef.current.multiplayerChannel = null;
-      }
+      const channel = supabase.channel(`game-lobby-${lobbyCode}`);
+      channelRef.current = channel;
+      gameData.multiplayerChannel = channel;
 
-      // Create new channel
-      const channel = supabase.channel(channelName);
-      
-      // Configure the channel before subscribing
       channel
         .on('presence', { event: 'sync' }, () => {
           const state = channel.presenceState();
-          const players = Object.values(state).flat();
-          
-          // Update other players list
-          gameDataRef.current.otherPlayers = players
-            .filter((p: any) => p.user_id !== gameDataRef.current.playerId)
+          gameData.otherPlayers = Object.values(state)
+            .flat()
+            .filter((p: any) => p.user_id !== gameData.playerId)
             .map((p: any) => ({
-              id: p.user_id,
-              x: p.x || window.innerWidth / 2,
-              y: p.y || window.innerHeight / 2,
-              size: 20,
-              team: p.team,
-              health: p.health || 100,
-              maxHealth: 100,
-              isAlive: p.isAlive !== false,
-              kills: p.kills || 0
+              id: p.user_id, x: p.x, y: p.y, size: 20, team: p.team,
+              health: 100, maxHealth: 100, isAlive: true, kills: 0
             }));
         })
-        .on('broadcast', { event: 'player-update' }, (payload) => {
-          const { playerId, position, health, isAlive, team } = payload.payload;
-          
-          // Update other player's position and status
-          const playerIndex = gameDataRef.current.otherPlayers.findIndex(p => p.id === playerId);
-          if (playerIndex >= 0) {
-            gameDataRef.current.otherPlayers[playerIndex] = {
-              ...gameDataRef.current.otherPlayers[playerIndex],
-              x: position.x,
-              y: position.y,
-              health,
-              isAlive,
-              team
-            };
-          } else if (playerId !== gameDataRef.current.playerId) {
-            // Add new player
-            gameDataRef.current.otherPlayers.push({
-              id: playerId,
-              x: position.x,
-              y: position.y,
-              size: 20,
-              team,
-              health: health || 100,
-              maxHealth: 100,
-              isAlive: isAlive !== false,
-              kills: 0
+        .on('broadcast', { event: 'bullet-fired' }, ({ payload }) => {
+          if (payload.bullet.playerId !== gameData.playerId) gameData.bullets.push(payload.bullet);
+        })
+        .on('broadcast', { event: 'full-state-sync' }, ({ payload }) => {
+          if (!isHost) {
+            gameData.enemies = payload.enemies;
+            const myState = payload.players.find(p => p.id === gameData.playerId);
+            if (myState) {
+              gameData.player.health = myState.health;
+              gameData.player.isAlive = myState.isAlive;
+            }
+            gameData.otherPlayers.forEach(op => {
+              const opState = payload.players.find(p => p.id === op.id);
+              if (opState) {
+                op.health = opState.health;
+                op.isAlive = opState.isAlive;
+              }
             });
           }
-        })
-        .on('broadcast', { event: 'bullet-fired' }, (payload) => {
-          const { bullet } = payload.payload;
-          if (bullet.playerId !== gameDataRef.current.playerId) {
-            gameDataRef.current.bullets.push(bullet);
-          }
-        })
-        .on('broadcast', { event: 'enemies-sync' }, ({ payload }) => {
-            if (!gameDataRef.current.isHost) {
-                gameDataRef.current.enemies = payload.enemies;
-            }
         })
         .on('broadcast', { event: 'game-state-update' }, ({ payload }) => {
-            // Non-host clients accept the state from the host
-            if (!gameDataRef.current.isHost) {
-                setGameState(payload.newState);
-            }
-        });
-
-      // Subscribe to the channel
-      channel.subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('Successfully subscribed to multiplayer channel');
-          // Track presence
-          channel.track({
-            user_id: gameDataRef.current.playerId,
-            x: gameDataRef.current.player.x,
-            y: gameDataRef.current.player.y,
-            team: gameDataRef.current.player.team,
-            health: gameDataRef.current.player.health,
-            isAlive: gameDataRef.current.player.isAlive
-          });
-        } else if (status === 'CHANNEL_ERROR') {
-          console.error('Failed to subscribe to multiplayer channel');
-        }
-      });
-
-      channelRef.current = channel;
-      gameDataRef.current.multiplayerChannel = channel;
-    }
-
-    // Event handlers
-    const handleKeyDown = (e: KeyboardEvent) => {
-      gameDataRef.current.keys[e.key.toLowerCase()] = true;
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      gameDataRef.current.keys[e.key.toLowerCase()] = false;
-    };
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      
-      const rect = canvas.getBoundingClientRect();
-      gameDataRef.current.mouse.x = e.clientX - rect.left;
-      gameDataRef.current.mouse.y = e.clientY - rect.top;
-    };
-
-    const handleMouseClick = () => {
-      const bulletsBefore = gameDataRef.current.bullets.length;
-      shoot(gameDataRef.current, gameState);
-      const bulletsAfter = gameDataRef.current.bullets.length;
-      
-      // Broadcast new bullets in multiplayer
-      if (isMultiplayer && gameDataRef.current.multiplayerChannel && bulletsAfter > bulletsBefore) {
-        const newBullets = gameDataRef.current.bullets.slice(bulletsBefore);
-        newBullets.forEach(bullet => {
-          try {
-            gameDataRef.current.multiplayerChannel.send({
-              type: 'broadcast',
-              event: 'bullet-fired',
-              payload: { bullet }
+          if (!isHost) setGameState(payload.newState);
+        })
+        .subscribe(status => {
+          if (status === 'SUBSCRIBED') {
+            channel.track({
+              user_id: gameData.playerId,
+              x: gameData.player.x, y: gameData.player.y,
+              team: gameData.player.team
             });
-          } catch (error) {
-            console.warn('Failed to broadcast bullet:', error);
           }
         });
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => { gameData.keys[e.key.toLowerCase()] = true; };
+    const handleKeyUp = (e: KeyboardEvent) => { gameData.keys[e.key.toLowerCase()] = false; };
+    const handleMouseMove = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      gameData.mouse = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    };
+    const handleMouseClick = () => {
+      const newBullets = shoot(gameData, gameState);
+      if (isMultiplayer && newBullets.length > 0) {
+        newBullets.forEach(bullet => {
+          try {
+            gameData.multiplayerChannel?.send({ type: 'broadcast', event: 'bullet-fired', payload: { bullet } });
+          } catch (error) { console.warn('Failed to broadcast bullet:', error); }
+        });
       }
     };
-
     const handleResize = () => {
-      if (canvas) {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
-      }
     };
 
-    // Add event listeners
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('click', handleMouseClick);
     window.addEventListener('resize', handleResize);
-
-    // Initial resize
     handleResize();
 
-    const updateGame = () => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-
-      const gameData = gameDataRef.current;
-      const effectiveSetState = isMultiplayer && gameData.isHost ? hostSetGameState : setGameState;
-      
-      // LOGIC FOR ALL CLIENTS
+    const gameLoop = () => {
       updatePlayer(gameData, canvas);
       updateBullets(gameData, canvas);
-      
-      // Collision checks are complex. For now, let host be authoritative.
-      // A more advanced model might let clients predict collisions and get corrected by host.
-      if (gameData.gameMode === 'team-vs-team') {
-        checkPlayerBulletCollisions(gameData, effectiveSetState);
-      }
-      
-      // HOST-ONLY LOGIC
-      if (gameData.isHost) {
+
+      if (isHost) {
+        const effectiveSetState = isMultiplayer ? hostSetGameState : setGameState;
         updateEnemies(gameData);
         checkBulletEnemyCollisions(gameData, effectiveSetState);
         checkPlayerEnemyCollisions(gameData, effectiveSetState);
-
+        if (gameData.gameMode === 'team-vs-team') {
+            checkPlayerBulletCollisions(gameData, effectiveSetState);
+        }
         if (gameData.gameMode !== 'team-vs-team') {
           spawnEnemy(gameData, canvas, effectiveSetState, gameSettings);
           spawnBoss(gameData, canvas, effectiveSetState);
         }
+      }
 
-        // Periodically broadcast authoritative enemy state
-        const now = Date.now();
-        if (isMultiplayer && now - (gameData.lastEnemySync || 0) > 100) { // ~10 times per second
-          gameData.lastEnemySync = now;
+      if (!isMultiplayer || isHost) {
+        const newTime = Math.max(0, gameState.timeLeft - 1 / 60);
+        if (newTime <= 0) {
+          onGameEnd(Math.floor((Date.now() - gameData.gameStartTime) / 1000));
+        } else if (newTime !== gameState.timeLeft) {
+          hostSetGameState(prev => ({ ...prev, timeLeft: newTime }));
+        }
+      }
+
+      if (isMultiplayer) {
+        gameData.multiplayerChannel.track({
+          user_id: gameData.playerId,
+          x: gameData.player.x, y: gameData.player.y,
+          team: gameData.player.team
+        });
+
+        if (isHost && Date.now() - gameData.lastSyncTime > 100) { // Sync 10 times/sec
+          gameData.lastSyncTime = Date.now();
+          const allPlayersState = [gameData.player, ...gameData.otherPlayers].map(p => ({
+            id: p.id, health: p.health, isAlive: p.isAlive
+          }));
           try {
-            gameData.multiplayerChannel?.send({ type: 'broadcast', event: 'enemies-sync', payload: { enemies: gameData.enemies } });
-          } catch (e) {
-            console.warn('Failed to broadcast enemy sync:', e);
-          }
+            gameData.multiplayerChannel.send({
+              type: 'broadcast',
+              event: 'full-state-sync',
+              payload: { enemies: gameData.enemies, players: allPlayersState }
+            });
+          } catch (e) { console.warn('State sync failed:', e); }
         }
       }
 
-      // Update timer (should be synced from host)
-      if (!isMultiplayer || (isMultiplayer && gameData.isHost)) {
-          setGameState(prev => {
-            const newTime = Math.max(0, prev.timeLeft - 1/60);
-            if (newTime <= 0) {
-              const survivalTime = Math.floor((Date.now() - gameDataRef.current.gameStartTime) / 1000);
-              onGameEnd(survivalTime);
-            }
-            return { ...prev, timeLeft: newTime };
-          });
-      }
-
-      // Broadcast position in multiplayer (throttled)
-      if (isMultiplayer && gameDataRef.current.multiplayerChannel && Math.random() < 0.1) {
-        try {
-          gameDataRef.current.multiplayerChannel.track({
-            user_id: gameDataRef.current.playerId,
-            x: gameData.player.x,
-            y: gameData.player.y,
-            team: gameData.player.team,
-            health: gameData.player.health,
-            isAlive: gameData.player.isAlive
-          });
-        } catch (error) {
-          console.warn('Failed to broadcast player update:', error);
-        }
-      }
-    };
-
-    const gameLoop = () => {
-      updateGame();
-      renderGame(canvasRef.current!, gameDataRef.current);
+      renderGame(canvas, gameData);
       animationRef.current = requestAnimationFrame(gameLoop);
     };
 
-    gameLoop();
+    animationRef.current = requestAnimationFrame(gameLoop);
 
     return () => {
-      // Cleanup
       window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('keyup',handleKeyUp);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('click', handleMouseClick);
       window.removeEventListener('resize', handleResize);
-      
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+      if (channelRef.current) supabase.removeChannel(channelRef.current);
     };
   }, [isMultiplayer, isHost, lobbyCode, gameSettings, onGameEnd, setGameState, hostSetGameState]);
-
-  // Separate effect for multiplayer cleanup
-  useEffect(() => {
-    return () => {
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-        gameDataRef.current.multiplayerChannel = null;
-      }
-    };
-  }, [isMultiplayer, lobbyCode]);
 
   return null;
 };
