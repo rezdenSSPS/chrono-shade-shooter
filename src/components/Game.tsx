@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import GameCanvas from './GameCanvas';
 import GameOverScreen from './GameOverScreen';
@@ -19,6 +18,7 @@ const Game = () => {
   const [gameState, setGameState] = useState<GameState>('menu');
   const [finalScore, setFinalScore] = useState(0);
   const [lobbyCode, setLobbyCode] = useState('');
+  const [worldSeed, setWorldSeed] = useState<number | null>(null);
   const [gameSettings, setGameSettings] = useState<GameSettings>({
     enemyCount: 1,
     enemySpeed: 1,
@@ -30,15 +30,16 @@ const Game = () => {
   const startMultiplayer = () => setGameState('multiplayerLobby');
   const showLeaderboard = () => setGameState('leaderboard');
   const backToMenu = () => setGameState('menu');
-  
+
   const endGame = (score: number) => {
     setFinalScore(score);
     setGameState('gameOver');
   };
 
-  const startMultiplayerGame = (code: string, settings: GameSettings) => {
+  const startMultiplayerGame = (code: string, settings: GameSettings, seed?: number) => {
     setLobbyCode(code);
     setGameSettings(settings);
+    if (seed != null) setWorldSeed(seed);
     setGameState('multiplayerGame');
   };
 
@@ -51,27 +52,28 @@ const Game = () => {
           onStartMultiplayer={startMultiplayer}
         />
       )}
-      
+
       {gameState === 'playing' && (
         <GameCanvas onGameEnd={endGame} />
       )}
-      
+
       {gameState === 'multiplayerLobby' && (
         <MultiplayerLobby 
           onStartGame={startMultiplayerGame}
           onBackToMenu={backToMenu}
         />
       )}
-      
+
       {gameState === 'multiplayerGame' && (
         <GameCanvas 
           onGameEnd={endGame} 
           isMultiplayer={true}
           lobbyCode={lobbyCode}
           gameSettings={gameSettings}
+          worldSeed={worldSeed}
         />
       )}
-      
+
       {gameState === 'gameOver' && (
         <GameOverScreen 
           score={finalScore} 
@@ -79,7 +81,7 @@ const Game = () => {
           onShowLeaderboard={showLeaderboard}
         />
       )}
-      
+
       {gameState === 'leaderboard' && (
         <LeaderboardScreen onBackToMenu={backToMenu} />
       )}
