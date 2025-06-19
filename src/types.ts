@@ -41,19 +41,20 @@ export interface Player {
 }
 
 export interface Enemy {
-    id: string; // Added for multiplayer tracking
+    id: string; // Crucial for multiplayer tracking
     x: number;
     y: number;
     size: number;
-    speed: number; // Added for movement logic
+    speed: number;
     health: number;
     maxHealth: number;
     isBoss: boolean;
-    color: string; // Changed from darkness for clarity
+    darkness: number; // For your renderer
+    isAlive: boolean; // For logic and rendering
 }
 
 export interface Bullet {
-    id: string; // Added for multiplayer tracking
+    id: string; // Crucial for multiplayer tracking
     x: number;
     y: number;
     size: number;
@@ -61,11 +62,11 @@ export interface Bullet {
     playerId: string;
     team?: 'red' | 'blue';
     color: string;
-    vx: number; // Use velocity instead of angle/speed
-    vy: number; // Use velocity instead of angle/speed
+    vx: number; // For physics
+    vy: number; // For physics
 }
 
-// GAME DATA: The complete state of the simulation
+// GAME DATA: The complete state of the simulation for one client
 export interface GameData {
     player: Player;
     otherPlayers: Player[];
