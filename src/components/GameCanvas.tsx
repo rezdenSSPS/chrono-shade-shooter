@@ -1,3 +1,4 @@
+// src/components/GameCanvas.tsx
 import React, { useRef, useEffect, useState } from 'react';
 import { Button } from './ui/button';
 import useGameLoop from '@/hooks/useGameLoop';
@@ -5,6 +6,7 @@ import useGameLoop from '@/hooks/useGameLoop';
 interface GameCanvasProps {
   onGameEnd: (score: number) => void;
   isMultiplayer?: boolean;
+  isHost?: boolean;
   lobbyCode?: string;
   gameSettings?: {
     enemyCount: number;
@@ -14,7 +16,7 @@ interface GameCanvasProps {
   };
 }
 
-const GameCanvas = ({ onGameEnd, isMultiplayer = false, lobbyCode, gameSettings }: GameCanvasProps) => {
+const GameCanvas = ({ onGameEnd, isMultiplayer = false, isHost = false, lobbyCode, gameSettings }: GameCanvasProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [gameState, setGameState] = useState({
     timeLeft: gameSettings?.gameMode === 'team-vs-team' ? 300 : 180, // 5 minutes for PvP, 3 for others
@@ -30,7 +32,7 @@ const GameCanvas = ({ onGameEnd, isMultiplayer = false, lobbyCode, gameSettings 
     playersAlive: 1
   });
 
-  const gameLoop = useGameLoop(canvasRef, gameState, setGameState, onGameEnd, isMultiplayer, lobbyCode, gameSettings);
+  useGameLoop(canvasRef, gameState, setGameState, onGameEnd, isMultiplayer, isHost, lobbyCode, gameSettings);
 
   const purchaseGunUpgrade = () => {
     const cost = getGunUpgradeCost();
