@@ -1,8 +1,8 @@
-// src/hooks/useGameLoop.tsx (FINAL, with Synced Timer)
+// src/hooks/useGameLoop.tsx
 
 import { useEffect, useRef, useCallback } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import type { GameData, GameSettings, GameUIState, Player, Bullet } from '@/types';
+import type { GameData, GameSettings, GameUIState, Player, Bullet, Enemy } from '@/types';
 import { renderGame } from '@/utils/gameRenderer';
 import {
   updatePlayer,
@@ -26,6 +26,7 @@ interface UseGameLoopProps {
   gameSettings: GameSettings;
   channel?: RealtimeChannel;
   playerId?: string;
+  setIsSpectating: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 const useGameLoop = ({
@@ -38,6 +39,7 @@ const useGameLoop = ({
   gameSettings,
   channel,
   playerId,
+  setIsSpectating,
 }: UseGameLoopProps) => {
   const gameDataRef = useRef<GameData>({
     player: {
@@ -61,10 +63,11 @@ const useGameLoop = ({
     gameMode: gameSettings.gameMode,
     gameStartTime: Date.now(),
   });
+
   const animationFrameId = useRef<number>();
   const lastUpdateTime = useRef(Date.now());
   const lastPositionBroadcast = useRef(0);
-  const lastTimeBroadcast = useRef(0);
+  const lastStateBroadcast = useRef(0);
 
   // Effect to set up and tear down multiplayer listeners
   useEffect(() => {
@@ -75,22 +78,46 @@ const useGameLoop = ({
       const presenceState = channel.presenceState();
       const players = Object.values(presenceState)
         .flatMap((presences: any) => presences)
-        .filter((p: any) => p.user_id !== playerId);
+        .filter((p: any) => p.user_id !== playerId)
+        .map((p: any): Player => ({
+            id: p.user_id,
+            x: p.x || 0, y: p.y || 0,
+            health: p.health || 100, maxHealth: 100,
+            isAlive: p.isAlive !== false, // Default to true if not specified
+            team: p.team, role: p.role, size: 20, kills: p.kills || 0,
+        }));
+      gameDataRef.current.otherPlayers = players;
+    };
 
-      gameDataRef.current.otherPlayers = players.map((p: any): Player => ({
-        id: p.user_id, x: p.x, y: p.y, health: p.health, maxHealth: 100,
-        isAlive: p.isAlive, team: p.team, role: p.role, size: 20, kills: p.kills || 0,
-      }));
+    // --- Listener for game state updates from the HOST ---
+    const handleGameStateUpdate = (payload: { payload: { enemies: Enemy[], players: Player[], timeLeft: number } }) => {
+        // ONLY CLIENTS should accept state from the host
+        if (!isHost) {
+            gameDataRef.current.enemies = payload.payload.enemies;
+            
+            // Update other players' state, and find our own player's state
+            const self = payload.payload.players.find(p => p.id === playerId);
+            if (self) {
+                gameDataRef.current.player.health = self.health;
+                gameDataRef.current.player.isAlive = self.isAlive;
+                gameDataRef.current.player.kills = self.kills;
+                if (!self.isAlive) {
+                    setIsSpectating(true);
+                }
+            }
+            gameDataRef.current.otherPlayers = payload.payload.players.filter(p => p.id !== playerId);
+            setGameState(prev => ({...prev, timeLeft: payload.payload.timeLeft}));
+        }
     };
     
-    // --- Broadcast listener for BULLETS ---
+    // --- Listener for bullets fired by OTHER players ---
     const handleBulletFired = (payload: { payload: { bullet: Bullet } }) => {
       if (payload.payload.bullet.playerId !== playerId) {
         gameDataRef.current.bullets.push(payload.payload.bullet);
       }
     };
 
-    // --- Broadcast listener for PLAYER MOVEMENT ---
+    // --- Listener for player movement from OTHER players ---
     const handlePlayerMove = (payload: { payload: { id: string, x: number, y: number } }) => {
         if (payload.payload.id !== playerId) {
             const movedPlayer = gameDataRef.current.otherPlayers.find(p => p.id === payload.payload.id);
@@ -100,34 +127,33 @@ const useGameLoop = ({
             }
         }
     };
-
-    // --- Broadcast listener for TIME SYNC ---
-    const handleTimeUpdate = (payload: { payload: { timeLeft: number }}) => {
-      // Only non-hosts should listen and sync their time to the host
-      if (!isHost) {
-        setGameState(prev => ({ ...prev, timeLeft: payload.payload.timeLeft }));
-      }
+    
+    // --- Listener for UPGRADE purchases (affects everyone) ---
+    const handleUpgradePurchase = (payload: { payload: { upgradeType: string, cost: number }}) => {
+        const { upgradeType, cost } = payload.payload;
+        setGameState(prev => ({
+            ...prev,
+            timeLeft: prev.timeLeft - cost,
+            [`${upgradeType}Level`]: prev[`${upgradeType}Level`] + 1
+        }));
     };
 
     channel.on('presence', { event: 'sync' }, handlePresenceSync);
+    channel.on('broadcast', { event: 'game-state-update' }, handleGameStateUpdate);
     channel.on('broadcast', { event: 'bullet-fired' }, handleBulletFired);
     channel.on('broadcast', { event: 'player-move' }, handlePlayerMove);
-    channel.on('broadcast', { event: 'time-update' }, handleTimeUpdate);
+    channel.on('broadcast', { event: 'purchase-upgrade' }, handleUpgradePurchase);
     
-    // Announce presence once on join
-    channel.track({
-        user_id: playerId, x: gameDataRef.current.player.x, y: gameDataRef.current.player.y,
-        team: gameDataRef.current.player.team, health: gameDataRef.current.player.health,
-        isAlive: gameDataRef.current.player.isAlive, role: 'player',
-    });
+    handlePresenceSync(); // Sync once on join
 
     return () => {
         channel.off('presence', { event: 'sync' }, handlePresenceSync);
+        channel.off('broadcast', { event: 'game-state-update' }, handleGameStateUpdate);
         channel.off('broadcast', { event: 'bullet-fired' }, handleBulletFired);
         channel.off('broadcast', { event: 'player-move' }, handlePlayerMove);
-        channel.off('broadcast', { event: 'time-update' }, handleTimeUpdate);
+        channel.off('broadcast', { event: 'purchase-upgrade' }, handleUpgradePurchase);
     };
-  }, [isMultiplayer, channel, playerId, isHost, setGameState]);
+  }, [isMultiplayer, channel, playerId, isHost, setGameState, setIsSpectating]);
   
   // Input handler effect (no changes needed here)
   useEffect(() => {
@@ -140,7 +166,12 @@ const useGameLoop = ({
             gameDataRef.current.mouse.y = e.clientY - rect.top;
         }
     };
-    const handleMouseClick = () => shoot(gameDataRef.current, gameState, channel);
+    const handleMouseClick = () => {
+        // Player can only shoot if they are alive
+        if (gameDataRef.current.player.isAlive) {
+            shoot(gameDataRef.current, gameState, channel, isMultiplayer);
+        }
+    };
     const handleResize = () => {
         if (canvasRef.current) {
             canvasRef.current.width = window.innerWidth;
@@ -162,7 +193,7 @@ const useGameLoop = ({
       window.removeEventListener('click', handleMouseClick);
       window.removeEventListener('resize', handleResize);
     };
-  }, [canvasRef, gameState, channel]);
+  }, [canvasRef, gameState, channel, isMultiplayer]);
 
   // Main game loop
   const gameLoop = useCallback(() => {
@@ -173,66 +204,74 @@ const useGameLoop = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // --- UPDATE TIMER (Authoritative Logic) ---
-    if (!isMultiplayer || isHost) {
+    const { player, otherPlayers } = gameDataRef.current;
+    
+    // --- SHARED LOGIC (RUNS ON ALL CLIENTS) ---
+    if (player.isAlive) {
+        updatePlayer(gameDataRef.current, canvas);
+    }
+    updateBullets(gameDataRef.current, canvas);
+    
+    // --- HOST-ONLY LOGIC (THE "AUTHORITATIVE" SIMULATION) ---
+    if (isHost || !isMultiplayer) {
+      // Update timer
       const newTimeLeft = gameState.timeLeft - deltaTime;
-
       if (newTimeLeft <= 0) {
-        onGameEnd(gameDataRef.current.player.kills);
+        onGameEnd(player.kills); // Use local player's kills
         if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
-        return; // Stop the loop immediately
+        return;
       }
-
       setGameState(prev => ({ ...prev, timeLeft: newTimeLeft }));
 
-      // If host, broadcast the time periodically
-      if (isMultiplayer && channel) {
-        const timeBroadcastInterval = 1000; // 1 second
-        if (now - lastTimeBroadcast.current > timeBroadcastInterval) {
-          lastTimeBroadcast.current = now;
-          channel.send({
-            type: 'broadcast',
-            event: 'time-update',
-            payload: { timeLeft: newTimeLeft }
-          });
-        }
+      // Update game state
+      updateEnemies(gameDataRef.current);
+      const allPlayers = [player, ...otherPlayers];
+      const timeGained = checkBulletEnemyCollisions(gameDataRef.current, setGameState, allPlayers);
+      checkPlayerEnemyCollisions(gameDataRef.current, setGameState, allPlayers);
+      
+      if (timeGained > 0) {
+          setGameState(prev => ({...prev, timeLeft: prev.timeLeft + timeGained}));
+      }
+
+      if (gameSettings.gameMode === 'team-vs-team') {
+        checkPlayerBulletCollisions(gameDataRef.current, setGameState, allPlayers);
+      } else {
+        spawnEnemy(gameDataRef.current, canvas, setGameState, gameSettings);
+        spawnBoss(gameDataRef.current, canvas, setGameState);
       }
     }
-
-    // --- UPDATE GAME STATE ---
-    updatePlayer(gameDataRef.current, canvas);
-    updateBullets(gameDataRef.current, canvas);
-    updateEnemies(gameDataRef.current);
-    checkBulletEnemyCollisions(gameDataRef.current, setGameState);
-    checkPlayerEnemyCollisions(gameDataRef.current, setGameState);
-
-    if (gameDataRef.current.gameMode === 'team-vs-team') {
-      checkPlayerBulletCollisions(gameDataRef.current, setGameState);
-    } else {
-      spawnEnemy(gameDataRef.current, canvas, setGameState, gameSettings);
-      spawnBoss(gameDataRef.current, canvas, setGameState);
-    }
     
-    // --- MULTIPLAYER SEND LOGIC ---
+    // --- MULTIPLAYER BROADCAST LOGIC ---
     if (isMultiplayer && channel && playerId) {
-        // Broadcast position updates at a high frequency
-        const broadcastInterval = 16; // ms, ~60hz
-        if (now - lastPositionBroadcast.current > broadcastInterval) {
+        // Broadcast position updates frequently
+        const positionBroadcastInterval = 50; // ms
+        if (now - lastPositionBroadcast.current > positionBroadcastInterval && player.isAlive) {
             lastPositionBroadcast.current = now;
             channel.send({
                 type: 'broadcast',
                 event: 'player-move',
+                payload: { id: playerId, x: player.x, y: player.y }
+            });
+        }
+
+        // HOST ONLY: Broadcast the full game state periodically
+        const stateBroadcastInterval = 100; // ms (10 times per second)
+        if (isHost && now - lastStateBroadcast.current > stateBroadcastInterval) {
+            lastStateBroadcast.current = now;
+            channel.send({
+                type: 'broadcast',
+                event: 'game-state-update',
                 payload: {
-                    id: playerId,
-                    x: gameDataRef.current.player.x,
-                    y: gameDataRef.current.player.y
+                    enemies: gameDataRef.current.enemies,
+                    players: [gameDataRef.current.player, ...gameDataRef.current.otherPlayers],
+                    timeLeft: gameState.timeLeft,
                 }
             });
         }
     }
 
-    // --- RENDER ---
-    renderGame(canvas, gameDataRef.current);
+    // --- RENDER (SHARED) ---
+    renderGame(canvas, gameDataRef.current, playerId);
 
     animationFrameId.current = requestAnimationFrame(gameLoop);
   }, [gameSettings, isMultiplayer, setGameState, channel, playerId, canvasRef, gameState, onGameEnd, isHost]);
@@ -243,6 +282,15 @@ const useGameLoop = ({
     gameDataRef.current.player.id = playerId || 'solo-player';
     lastUpdateTime.current = Date.now();
     
+    // Initial track for multiplayer
+    if (isMultiplayer && channel && playerId) {
+      channel.track({
+        user_id: playerId, x: gameDataRef.current.player.x, y: gameDataRef.current.player.y,
+        team: gameDataRef.current.player.team, health: 100,
+        isAlive: true, role: isHost ? 'host' : 'player', kills: 0,
+      });
+    }
+    
     animationFrameId.current = requestAnimationFrame(gameLoop);
 
     return () => {
@@ -250,7 +298,7 @@ const useGameLoop = ({
         cancelAnimationFrame(animationFrameId.current);
       }
     };
-  }, [gameLoop, gameSettings.gameMode, playerId]);
+  }, [gameLoop, gameSettings.gameMode, playerId, isMultiplayer, channel, isHost]);
 
   return null;
 };
