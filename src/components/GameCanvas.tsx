@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useState } from 'react';
 import { Button } from './ui/button';
 import useGameLoop from '@/hooks/useGameLoop';
@@ -18,14 +17,17 @@ interface GameCanvasProps {
 const GameCanvas = ({ onGameEnd, isMultiplayer = false, lobbyCode, gameSettings }: GameCanvasProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [gameState, setGameState] = useState({
-    timeLeft: 180,
+    timeLeft: gameSettings?.gameMode === 'team-vs-team' ? 300 : 180, // 5 minutes for PvP, 3 for others
     gunLevel: 1,
     fireRateLevel: 1,
     bulletSizeLevel: 1,
     enemiesKilled: 0,
     bossActive: false,
     gameStartTime: Date.now(),
-    wave: 1
+    wave: 1,
+    gameMode: gameSettings?.gameMode || 'survival',
+    teamScores: { red: 0, blue: 0 },
+    playersAlive: 1
   });
 
   const gameLoop = useGameLoop(canvasRef, gameState, setGameState, onGameEnd, isMultiplayer, lobbyCode, gameSettings);
@@ -104,85 +106,127 @@ const GameCanvas = ({ onGameEnd, isMultiplayer = false, lobbyCode, gameSettings 
 
   const displayTime = Math.floor(gameState.timeLeft);
 
+  const getGameModeDisplay = () => {
+    switch (gameSettings?.gameMode) {
+      case 'team-vs-enemies':
+        return '🤝 TEAM VS ENEMIES';
+      case 'team-vs-team':
+        return '⚔️ TEAM VS TEAM';
+      default:
+        return '🏆 SURVIVAL';
+    }
+  };
+
+  const showUpgrades = gameSettings?.gameMode !== 'team-vs-team';
+
   return (
     <div className="fixed inset-0 bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex flex-col">
       {/* Top UI Bar */}
       <div className="relative z-10 bg-gradient-to-r from-black/80 via-gray-900/80 to-black/80 backdrop-blur-md border-b border-cyan-400/30 p-4">
         <div className="flex items-center justify-between max-w-screen-2xl mx-auto">
           
-          {/* Timer (Center) */}
+          {/* Game Mode & Timer (Center) */}
           <div className="flex-1 flex justify-center">
-            <div className="bg-gradient-to-r from-yellow-500 to-orange-500 text-black px-6 py-2 rounded-xl border-2 border-yellow-400 shadow-lg">
-              <div className="text-2xl font-bold text-center">
-                ⏱️ {displayTime}s
+            <div className="text-center">
+              <div className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-1 rounded-lg text-sm font-bold mb-2">
+                {getGameModeDisplay()}
+              </div>
+              <div className="bg-gradient-to-r from-yellow-500 to-orange-500 text-black px-6 py-2 rounded-xl border-2 border-yellow-400 shadow-lg">
+                <div className="text-2xl font-bold">
+                  ⏱️ {displayTime}s
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Upgrades (Left) */}
+          {/* Upgrades (Left) - Only show in non-PvP modes */}
           <div className="flex-1 flex justify-start">
-            <div className="flex gap-3">
-              <Button
-                onClick={purchaseGunUpgrade}
-                disabled={!canUpgradeGun}
-                className={`text-xs px-3 py-2 rounded-lg font-bold transition-all ${
-                  canUpgradeGun 
-                    ? 'bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-400 hover:to-emerald-400 text-black' 
-                    : 'bg-gray-700/70 text-gray-400 cursor-not-allowed'
-                }`}
-              >
-                🔫 {getGunUpgradeText()}
-              </Button>
-              
-              <Button
-                onClick={purchaseFireRateUpgrade}
-                disabled={!canUpgradeFireRate}
-                className={`text-xs px-3 py-2 rounded-lg font-bold transition-all ${
-                  canUpgradeFireRate 
-                    ? 'bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white' 
-                    : 'bg-gray-700/70 text-gray-400 cursor-not-allowed'
-                }`}
-              >
-                ⚡ {getFireRateUpgradeText()}
-              </Button>
-              
-              <Button
-                onClick={purchaseBulletSizeUpgrade}
-                disabled={!canUpgradeBulletSize}
-                className={`text-xs px-3 py-2 rounded-lg font-bold transition-all ${
-                  canUpgradeBulletSize 
-                    ? 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-400 hover:to-pink-400 text-white' 
-                    : 'bg-gray-700/70 text-gray-400 cursor-not-allowed'
-                }`}
-              >
-                💥 {getBulletSizeUpgradeText()}
-              </Button>
-            </div>
+            {showUpgrades && (
+              <div className="flex gap-3">
+                <Button
+                  onClick={purchaseGunUpgrade}
+                  disabled={!canUpgradeGun}
+                  className={`text-xs px-3 py-2 rounded-lg font-bold transition-all ${
+                    canUpgradeGun 
+                      ? 'bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-400 hover:to-emerald-400 text-black' 
+                      : 'bg-gray-700/70 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  🔫 {getGunUpgradeText()}
+                </Button>
+                
+                <Button
+                  onClick={purchaseFireRateUpgrade}
+                  disabled={!canUpgradeFireRate}
+                  className={`text-xs px-3 py-2 rounded-lg font-bold transition-all ${
+                    canUpgradeFireRate 
+                      ? 'bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white' 
+                      : 'bg-gray-700/70 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  ⚡ {getFireRateUpgradeText()}
+                </Button>
+                
+                <Button
+                  onClick={purchaseBulletSizeUpgrade}
+                  disabled={!canUpgradeBulletSize}
+                  className={`text-xs px-3 py-2 rounded-lg font-bold transition-all ${
+                    canUpgradeBulletSize 
+                      ? 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-400 hover:to-pink-400 text-white' 
+                      : 'bg-gray-700/70 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  💥 {getBulletSizeUpgradeText()}
+                </Button>
+              </div>
+            )}
           </div>
 
           {/* Stats (Right) */}
           <div className="flex-1 flex justify-end">
             <div className="flex items-center gap-6 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="text-purple-400 font-bold">Wave:</span>
-                <span className="text-white font-bold">{gameState.wave}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-red-400 font-bold">Kills:</span>
-                <span className="text-white font-bold">{gameState.enemiesKilled}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-green-400 font-bold">Gun:</span>
-                <span className="text-white font-bold">Lv{gameState.gunLevel}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-orange-400 font-bold">Rate:</span>
-                <span className="text-white font-bold">Lv{gameState.fireRateLevel}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-purple-400 font-bold">Size:</span>
-                <span className="text-white font-bold">Lv{gameState.bulletSizeLevel}</span>
-              </div>
+              {gameSettings?.gameMode === 'team-vs-team' && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <span className="text-red-400 font-bold">🔴 Red:</span>
+                    <span className="text-white font-bold">{gameState.teamScores?.red || 0}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-blue-400 font-bold">🔵 Blue:</span>
+                    <span className="text-white font-bold">{gameState.teamScores?.blue || 0}</span>
+                  </div>
+                </>
+              )}
+              
+              {gameSettings?.gameMode !== 'team-vs-team' && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <span className="text-purple-400 font-bold">Wave:</span>
+                    <span className="text-white font-bold">{gameState.wave}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-red-400 font-bold">Kills:</span>
+                    <span className="text-white font-bold">{gameState.enemiesKilled}</span>
+                  </div>
+                </>
+              )}
+              
+              {showUpgrades && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <span className="text-green-400 font-bold">Gun:</span>
+                    <span className="text-white font-bold">Lv{gameState.gunLevel}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-orange-400 font-bold">Rate:</span>
+                    <span className="text-white font-bold">Lv{gameState.fireRateLevel}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-purple-400 font-bold">Size:</span>
+                    <span className="text-white font-bold">Lv{gameState.bulletSizeLevel}</span>
+                  </div>
+                </>
+              )}
               
               {gameState.bossActive && (
                 <div className="text-red-500 font-bold animate-pulse">
@@ -213,8 +257,16 @@ const GameCanvas = ({ onGameEnd, isMultiplayer = false, lobbyCode, gameSettings 
           <div className="text-sm flex items-center gap-4">
             <span>⌨️ WASD - Move</span>
             <span>🖱️ Mouse - Aim & Shoot</span>
-            <span>💰 Time = Currency</span>
-            <span>🎯 Dark Enemies = More Time</span>
+            {gameSettings?.gameMode === 'team-vs-team' ? (
+              <span>⚔️ Eliminate Enemy Team</span>
+            ) : gameSettings?.gameMode === 'team-vs-enemies' ? (
+              <span>🤝 Work Together vs Enemies</span>
+            ) : (
+              <>
+                <span>💰 Time = Currency</span>
+                <span>🎯 Dark Enemies = More Time</span>
+              </>
+            )}
           </div>
         </div>
       </div>

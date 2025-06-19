@@ -1,4 +1,3 @@
-
 import { GameData } from '@/types/game';
 
 export const drawHumanSilhouette = (
@@ -7,39 +6,78 @@ export const drawHumanSilhouette = (
   y: number, 
   size: number, 
   color: string, 
-  isPlayer = false
+  isPlayer = false,
+  team?: 'red' | 'blue',
+  health?: number,
+  maxHealth?: number,
+  isAlive = true
 ) => {
-  ctx.fillStyle = color;
-  ctx.strokeStyle = isPlayer ? '#00ff00' : color;
-  ctx.lineWidth = isPlayer ? 3 : 1;
+  if (!isAlive) {
+    // Draw dead player as gray outline
+    ctx.strokeStyle = '#666666';
+    ctx.lineWidth = 2;
+    ctx.fillStyle = 'transparent';
+  } else {
+    ctx.fillStyle = color;
+    ctx.strokeStyle = isPlayer ? '#00ff00' : color;
+    ctx.lineWidth = isPlayer ? 3 : 1;
+    
+    // Team colors for multiplayer
+    if (team) {
+      ctx.strokeStyle = team === 'red' ? '#ff0000' : '#0000ff';
+      ctx.lineWidth = 4;
+    }
+  }
   
   const scale = size / 25;
   
   // Head
   ctx.beginPath();
   ctx.arc(x, y - 12 * scale, 6 * scale, 0, Math.PI * 2);
-  ctx.fill();
-  if (isPlayer) ctx.stroke();
+  if (isAlive) ctx.fill();
+  ctx.stroke();
   
   // Body (torso)
   ctx.beginPath();
   ctx.rect(x - 4 * scale, y - 6 * scale, 8 * scale, 15 * scale);
-  ctx.fill();
-  if (isPlayer) ctx.stroke();
+  if (isAlive) ctx.fill();
+  ctx.stroke();
   
   // Arms
   ctx.beginPath();
   ctx.rect(x - 12 * scale, y - 3 * scale, 6 * scale, 12 * scale);
   ctx.rect(x + 6 * scale, y - 3 * scale, 6 * scale, 12 * scale);
-  ctx.fill();
-  if (isPlayer) ctx.stroke();
+  if (isAlive) ctx.fill();
+  ctx.stroke();
   
   // Legs
   ctx.beginPath();
   ctx.rect(x - 3 * scale, y + 9 * scale, 5 * scale, 12 * scale);
   ctx.rect(x - 2 * scale, y + 9 * scale, 5 * scale, 12 * scale);
-  ctx.fill();
-  if (isPlayer) ctx.stroke();
+  if (isAlive) ctx.fill();
+  ctx.stroke();
+  
+  // Health bar for team modes
+  if (isAlive && health !== undefined && maxHealth !== undefined && health < maxHealth) {
+    const barWidth = size * 1.5;
+    const barHeight = 6;
+    const barX = x - barWidth / 2;
+    const barY = y - size - 15;
+    
+    // Background
+    ctx.fillStyle = '#333333';
+    ctx.fillRect(barX, barY, barWidth, barHeight);
+    
+    // Health
+    const healthPercent = health / maxHealth;
+    ctx.fillStyle = healthPercent > 0.5 ? '#00ff00' : healthPercent > 0.25 ? '#ffff00' : '#ff0000';
+    ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
+    
+    // Border
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barX, barY, barWidth, barHeight);
+  }
 };
 
 export const renderGame = (
@@ -77,8 +115,44 @@ export const renderGame = (
     ctx.stroke();
   }
 
-  // Draw player
-  drawHumanSilhouette(ctx, gameData.player.x, gameData.player.y, gameData.player.size, '#00ff00', true);
+  // Draw main player
+  drawHumanSilhouette(
+    ctx, 
+    gameData.player.x, 
+    gameData.player.y, 
+    gameData.player.size, 
+    '#00ff00', 
+    true,
+    gameData.player.team,
+    gameData.player.health,
+    gameData.player.maxHealth,
+    gameData.player.isAlive
+  );
+
+  // Draw other players in multiplayer
+  gameData.otherPlayers?.forEach(player => {
+    const color = player.team === 'red' ? '#ff6666' : player.team === 'blue' ? '#6666ff' : '#ffff00';
+    drawHumanSilhouette(
+      ctx, 
+      player.x, 
+      player.y, 
+      player.size, 
+      color, 
+      false,
+      player.team,
+      player.health,
+      player.maxHealth,
+      player.isAlive
+    );
+    
+    // Player name/ID
+    if (player.id) {
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(player.id.substring(0, 8), player.x, player.y - player.size - 25);
+    }
+  });
 
   // Draw enemies
   gameData.enemies.forEach(enemy => {
@@ -109,16 +183,28 @@ export const renderGame = (
     ctx.shadowBlur = 0;
   });
 
-  // Enhanced crosshair
-  ctx.strokeStyle = '#00ffff';
-  ctx.lineWidth = 3;
-  ctx.shadowColor = '#00ffff';
-  ctx.shadowBlur = 8;
-  ctx.beginPath();
-  ctx.moveTo(gameData.mouse.x - 20, gameData.mouse.y);
-  ctx.lineTo(gameData.mouse.x + 20, gameData.mouse.y);
-  ctx.moveTo(gameData.mouse.x, gameData.mouse.y - 20);
-  ctx.lineTo(gameData.mouse.x, gameData.mouse.y + 20);
-  ctx.stroke();
-  ctx.shadowBlur = 0;
+  // Enhanced crosshair (only for alive players)
+  if (gameData.player.isAlive !== false) {
+    ctx.strokeStyle = '#00ffff';
+    ctx.lineWidth = 3;
+    ctx.shadowColor = '#00ffff';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(gameData.mouse.x - 20, gameData.mouse.y);
+    ctx.lineTo(gameData.mouse.x + 20, gameData.mouse.y);
+    ctx.moveTo(gameData.mouse.x, gameData.mouse.y - 20);
+    ctx.lineTo(gameData.mouse.x, gameData.mouse.y + 20);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  // Game mode specific UI
+  if (gameData.gameMode === 'team-vs-team') {
+    // Team scores
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 24px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText('🔴 Red Team', 20, 40);
+    ctx.fillText('🔵 Blue Team', 20, 80);
+  }
 };

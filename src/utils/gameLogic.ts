@@ -1,8 +1,11 @@
-import { GameData, GameState } from '@/types/game';
+import { GameData, GameState, Player } from '@/types/game';
 
 export const updatePlayer = (gameData: GameData, canvas: HTMLCanvasElement) => {
   const speed = 5;
   const { keys, player } = gameData;
+  
+  // Only move if player is alive
+  if (player.isAlive === false) return;
   
   if (keys['w'] || keys['arrowup']) player.y -= speed;
   if (keys['s'] || keys['arrowdown']) player.y += speed;
@@ -28,12 +31,29 @@ export const updateEnemies = (gameData: GameData) => {
   const player = gameData.player;
   
   gameData.enemies.forEach(enemy => {
-    const dx = player.x - enemy.x;
-    const dy = player.y - enemy.y;
+    let targetPlayer = player;
+    
+    // In team vs enemies mode, enemies target the closest alive player
+    if (gameData.gameMode === 'team-vs-enemies') {
+      const alivePlayers = [player, ...gameData.otherPlayers].filter(p => p.isAlive !== false);
+      if (alivePlayers.length > 0) {
+        let closestDistance = Infinity;
+        alivePlayers.forEach(p => {
+          const dist = Math.sqrt((p.x - enemy.x) ** 2 + (p.y - enemy.y) ** 2);
+          if (dist < closestDistance) {
+            closestDistance = dist;
+            targetPlayer = p;
+          }
+        });
+      }
+    }
+    
+    const dx = targetPlayer.x - enemy.x;
+    const dy = targetPlayer.y - enemy.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
     
     if (enemy.isBoss || distance < 200) {
-      // Chase player if boss or player is close
+      // Chase target player if boss or player is close
       const speed = enemy.speed || 1;
       enemy.vx = (dx / distance) * speed;
       enemy.vy = (dy / distance) * speed;
@@ -95,12 +115,26 @@ export const checkBulletEnemyCollisions = (
         if (enemy.hp <= 0) {
           // Enemy defeated
           const timeBonus = Math.floor(enemy.darkness * 10) + (enemy.isBoss ? 30 : 5);
-          setGameState(prev => ({
-            ...prev,
-            timeLeft: prev.timeLeft + timeBonus,
-            enemiesKilled: prev.enemiesKilled + 1,
-            bossActive: enemy.isBoss ? false : prev.bossActive
-          }));
+          
+          setGameState(prev => {
+            const newState = {
+              ...prev,
+              timeLeft: prev.timeLeft + timeBonus,
+              enemiesKilled: prev.enemiesKilled + 1,
+              bossActive: enemy.isBoss ? false : prev.bossActive
+            };
+            
+            // Update team scores in team modes
+            if (gameData.gameMode === 'team-vs-enemies' && bullet.team) {
+              newState.teamScores = {
+                ...prev.teamScores,
+                [bullet.team]: (prev.teamScores?.[bullet.team] || 0) + 1
+              };
+            }
+            
+            return newState;
+          });
+          
           gameData.enemies.splice(enemyIndex, 1);
         }
       }
@@ -112,17 +146,86 @@ export const checkPlayerEnemyCollisions = (
   gameData: GameData,
   setGameState: React.Dispatch<React.SetStateAction<GameState>>
 ) => {
-  const player = gameData.player;
+  const allPlayers = [gameData.player, ...gameData.otherPlayers];
   
-  gameData.enemies.forEach(enemy => {
-    const dx = player.x - enemy.x;
-    const dy = player.y - enemy.y;
-    const distance = Math.sqrt(dx * dx + dy * dy);
+  allPlayers.forEach(player => {
+    if (player.isAlive === false) return;
     
-    if (distance < player.size + enemy.size / 2) {
-      // Player hit - end game
-      const survivalTime = Math.floor((Date.now() - gameData.gameStartTime) / 1000);
-      setGameState(prev => ({ ...prev, timeLeft: 0 }));
-    }
+    gameData.enemies.forEach(enemy => {
+      const dx = player.x - enemy.x;
+      const dy = player.y - enemy.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance < player.size + enemy.size / 2) {
+        // Player hit
+        if (gameData.gameMode === 'team-vs-enemies' || gameData.gameMode === 'team-vs-team') {
+          // In team modes, players have health
+          player.health = Math.max(0, (player.health || 100) - 25);
+          if (player.health <= 0) {
+            player.isAlive = false;
+            
+            // Check if all players are dead
+            const alivePlayers = allPlayers.filter(p => p.isAlive !== false);
+            if (alivePlayers.length === 0) {
+              const survivalTime = Math.floor((Date.now() - gameData.gameStartTime) / 1000);
+              setGameState(prev => ({ ...prev, timeLeft: 0 }));
+            }
+          }
+        } else {
+          // Single player mode - instant death
+          const survivalTime = Math.floor((Date.now() - gameData.gameStartTime) / 1000);
+          setGameState(prev => ({ ...prev, timeLeft: 0 }));
+        }
+      }
+    });
+  });
+};
+
+export const checkPlayerBulletCollisions = (
+  gameData: GameData,
+  setGameState: React.Dispatch<React.SetStateAction<GameState>>
+) => {
+  if (gameData.gameMode !== 'team-vs-team') return;
+  
+  const allPlayers = [gameData.player, ...gameData.otherPlayers];
+  
+  gameData.bullets.forEach((bullet, bulletIndex) => {
+    allPlayers.forEach(player => {
+      if (player.isAlive === false) return;
+      if (bullet.playerId === player.id) return; // Can't hit yourself
+      if (bullet.team === player.team) return; // Can't hit teammates
+      
+      const dx = bullet.x - player.x;
+      const dy = bullet.y - player.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance < bullet.size + player.size / 2) {
+        // Player hit by bullet
+        player.health = Math.max(0, (player.health || 100) - 20);
+        gameData.bullets.splice(bulletIndex, 1);
+        
+        if (player.health <= 0) {
+          player.isAlive = false;
+          
+          // Award kill to shooter's team
+          setGameState(prev => {
+            const newState = { ...prev };
+            if (bullet.team && newState.teamScores) {
+              newState.teamScores[bullet.team] = (newState.teamScores[bullet.team] || 0) + 1;
+            }
+            return newState;
+          });
+          
+          // Check win condition
+          const redPlayersAlive = allPlayers.filter(p => p.team === 'red' && p.isAlive !== false).length;
+          const bluePlayersAlive = allPlayers.filter(p => p.team === 'blue' && p.isAlive !== false).length;
+          
+          if (redPlayersAlive === 0 || bluePlayersAlive === 0) {
+            const survivalTime = Math.floor((Date.now() - gameData.gameStartTime) / 1000);
+            setGameState(prev => ({ ...prev, timeLeft: 0 }));
+          }
+        }
+      }
+    });
   });
 };

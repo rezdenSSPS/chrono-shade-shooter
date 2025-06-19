@@ -1,4 +1,3 @@
-
 import { GameData, GameState } from '@/types/game';
 
 export const shoot = (gameData: GameData, gameState: GameState) => {
@@ -7,6 +6,9 @@ export const shoot = (gameData: GameData, gameState: GameState) => {
   const shootDelay = fireRateDelays[gameState.fireRateLevel - 1] || 25;
   
   if (now - gameData.lastShot < shootDelay) return;
+  
+  // Can't shoot if dead
+  if (gameData.player.isAlive === false) return;
   
   const player = gameData.player;
   const mouse = gameData.mouse;
@@ -34,6 +36,14 @@ export const shoot = (gameData: GameData, gameState: GameState) => {
 
   const config = bulletConfigs[gameState.gunLevel - 1] || bulletConfigs[0];
   
+  // Team-based bullet colors
+  let bulletColor = config.color;
+  if (gameData.gameMode === 'team-vs-team') {
+    bulletColor = player.team === 'red' ? '#ff0000' : '#0000ff';
+  } else if (gameData.gameMode === 'team-vs-enemies') {
+    bulletColor = '#00ff00'; // Green for team vs enemies
+  }
+  
   for (let i = 0; i < config.count; i++) {
     let angle = Math.atan2(vy, vx);
     if (config.count > 1) {
@@ -47,7 +57,9 @@ export const shoot = (gameData: GameData, gameState: GameState) => {
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       size: bulletSize,
-      color: config.color
+      color: bulletColor,
+      playerId: gameData.playerId,
+      team: player.team
     });
   }
   
