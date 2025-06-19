@@ -1,4 +1,4 @@
-
+// src/components/Game.tsx
 import React, { useState } from 'react';
 import GameCanvas from './GameCanvas';
 import GameOverScreen from './GameOverScreen';
@@ -19,6 +19,7 @@ const Game = () => {
   const [gameState, setGameState] = useState<GameState>('menu');
   const [finalScore, setFinalScore] = useState(0);
   const [lobbyCode, setLobbyCode] = useState('');
+  const [isHost, setIsHost] = useState(false);
   const [gameSettings, setGameSettings] = useState<GameSettings>({
     enemyCount: 1,
     enemySpeed: 1,
@@ -36,9 +37,10 @@ const Game = () => {
     setGameState('gameOver');
   };
 
-  const startMultiplayerGame = (code: string, settings: GameSettings) => {
+  const startMultiplayerGame = (code: string, settings: GameSettings, hostStatus: boolean) => {
     setLobbyCode(code);
     setGameSettings(settings);
+    setIsHost(hostStatus);
     setGameState('multiplayerGame');
   };
 
@@ -67,6 +69,7 @@ const Game = () => {
         <GameCanvas 
           onGameEnd={endGame} 
           isMultiplayer={true}
+          isHost={isHost}
           lobbyCode={lobbyCode}
           gameSettings={gameSettings}
         />
