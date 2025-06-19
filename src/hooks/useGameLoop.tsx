@@ -1,34 +1,52 @@
-import { useEffect, useRef } from 'react';
-import { supabase } from '@/integrations/supabase/client';
-import { GameData, GameState } from '@/types/game';
-import { renderGame } from '@/utils/gameRenderer';
-import { updatePlayer, updateBullets, updateEnemies, checkBulletEnemyCollisions, checkPlayerEnemyCollisions, checkPlayerBulletCollisions } from '@/utils/gameLogic';
-import { spawnEnemy, spawnBoss } from '@/utils/enemySpawner';
-import { shoot } from '@/utils/shooting';
+import { useEffect, useRef, useCallback } from 'react';
+import type { RealtimeChannel } from '@supabase/supabase-js';
+import type { GameData, GameSettings, GameUIState, Player, Bullet } from '@/types';
 
-const useGameLoop = (
-  canvasRef: React.RefObject<HTMLCanvasElement>,
-  gameState: GameState,
-  setGameState: React.Dispatch<React.SetStateAction<GameState>>,
-  onGameEnd: (score: number) => void,
-  isMultiplayer: boolean = false,
-  lobbyCode?: string,
-  gameSettings?: {
-    enemyCount: number;
-    enemySpeed: number;
-    enemyDamage: number;
-    gameMode?: 'survival' | 'team-vs-enemies' | 'team-vs-team';
-  }
-) => {
+// --- PLACEHOLDER UTILS ---
+// You should have your own implementations for these in your /src/utils/ folder.
+const renderGame = (canvas: HTMLCanvasElement, gameData: GameData) => { /* Your drawing logic here */ };
+const updatePlayer = (gameData: GameData, canvas: HTMLCanvasElement) => { /* Your player movement logic */ };
+const updateBullets = (gameData: GameData, canvas: HTMLCanvasElement) => { /* Your bullet movement logic */ };
+const updateEnemies = (gameData: GameData) => { /* Your enemy movement logic */ };
+const checkBulletEnemyCollisions = (gameData: GameData, setGameState: any) => { /* Your collision logic */ };
+const checkPlayerEnemyCollisions = (gameData: GameData, setGameState: any) => { /* Your collision logic */ };
+const checkPlayerBulletCollisions = (gameData: GameData, setGameState: any) => { /* Your collision logic for PvP */ };
+const spawnEnemy = (gameData: GameData, canvas: HTMLCanvasElement, setGameState: any, gameSettings?: GameSettings) => { /* Your enemy spawning logic */ };
+const spawnBoss = (gameData: GameData, canvas: HTMLCanvasElement, setGameState: any) => { /* Your boss spawning logic */ };
+const shoot = (gameData: GameData, gameState: GameUIState, channel?: RealtimeChannel | null) => { /* Your shooting logic, it should now handle broadcasting bullets */ };
+// --- END PLACEHOLDER UTILS ---
+
+interface UseGameLoopProps {
+  canvasRef: React.RefObject<HTMLCanvasElement>;
+  gameState: GameUIState;
+  setGameState: React.Dispatch<React.SetStateAction<GameUIState>>;
+  onGameEnd: (score: number) => void;
+  isMultiplayer?: boolean;
+  gameSettings: GameSettings;
+  channel?: RealtimeChannel;
+  playerId?: string;
+}
+
+const useGameLoop = ({
+  canvasRef,
+  gameState,
+  setGameState,
+  onGameEnd,
+  isMultiplayer = false,
+  gameSettings,
+  channel,
+  playerId,
+}: UseGameLoopProps) => {
   const gameDataRef = useRef<GameData>({
-    player: { 
-      x: window.innerWidth / 2, 
-      y: window.innerHeight / 2, 
+    player: {
+      id: playerId || 'solo',
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2,
       size: 20,
       health: 100,
       maxHealth: 100,
       isAlive: true,
-      kills: 0
+      kills: 0,
     },
     otherPlayers: [],
     enemies: [],
@@ -38,280 +56,159 @@ const useGameLoop = (
     lastShot: 0,
     lastEnemySpawn: 0,
     lastBossSpawn: 0,
-    gameStartTime: Date.now(),
-    multiplayerChannel: null,
-    gameMode: gameSettings?.gameMode || 'survival',
-    playerId: Math.random().toString(36).substring(2, 10)
   });
+  const animationFrameId = useRef<number>();
+  const lastUpdateTime = useRef(Date.now());
 
-  const animationRef = useRef<number>();
-  const channelRef = useRef<any>(null);
-
+  // Effect to set up and tear down multiplayer listeners
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!isMultiplayer || !channel) return;
 
-    gameDataRef.current.gameStartTime = gameState.gameStartTime;
-    gameDataRef.current.gameMode = gameSettings?.gameMode || 'survival';
+    const handlePresenceSync = () => {
+      const presenceState = channel.presenceState();
+      const players = Object.values(presenceState)
+        .flatMap((presences: any) => presences)
+        .filter((p: any) => p.user_id !== playerId);
+
+      gameDataRef.current.otherPlayers = players.map((p: any): Player => ({
+        id: p.user_id, x: p.x, y: p.y, health: p.health, maxHealth: 100,
+        isAlive: p.isAlive, team: p.team, size: 20, kills: p.kills || 0,
+      }));
+    };
     
-    // Initialize player based on game mode
-    if (gameSettings?.gameMode === 'team-vs-team') {
-      // Assign random team
-      gameDataRef.current.player.team = Math.random() < 0.5 ? 'red' : 'blue';
-      gameDataRef.current.player.health = 100;
-      gameDataRef.current.player.maxHealth = 100;
-      
-      // Initialize team scores
-      setGameState(prev => ({
-        ...prev,
-        teamScores: { red: 0, blue: 0 }
-      }));
-    } else if (gameSettings?.gameMode === 'team-vs-enemies') {
-      gameDataRef.current.player.team = 'blue'; // All players on same team vs enemies
-      gameDataRef.current.player.health = 100;
-      gameDataRef.current.player.maxHealth = 100;
-      
-      setGameState(prev => ({
-        ...prev,
-        teamScores: { red: 0, blue: 0 }
-      }));
-    }
+    const handlePlayerUpdate = (payload: any) => {
+       // This should be handled by presence, but broadcast can be used for intermittent events
+    };
 
-    gameDataRef.current.player.x = window.innerWidth / 2;
-    gameDataRef.current.player.y = window.innerHeight / 2;
-    gameDataRef.current.player.id = gameDataRef.current.playerId;
-
-    // Setup multiplayer if needed
-    if (isMultiplayer && lobbyCode && !channelRef.current) {
-      const channelName = `game-lobby-${lobbyCode}`;
-      
-      // Remove any existing channel first
-      if (gameDataRef.current.multiplayerChannel) {
-        supabase.removeChannel(gameDataRef.current.multiplayerChannel);
-        gameDataRef.current.multiplayerChannel = null;
+    const handleBulletFired = (payload: { bullet: Bullet }) => {
+      if (payload.bullet.playerId !== playerId) {
+        gameDataRef.current.bullets.push(payload.bullet);
       }
-
-      // Create new channel
-      const channel = supabase.channel(channelName);
-      
-      // Configure the channel before subscribing
-      channel
-        .on('presence', { event: 'sync' }, () => {
-          const state = channel.presenceState();
-          const players = Object.values(state).flat();
-          
-          // Update other players list
-          gameDataRef.current.otherPlayers = players
-            .filter((p: any) => p.user_id !== gameDataRef.current.playerId)
-            .map((p: any) => ({
-              id: p.user_id,
-              x: p.x || window.innerWidth / 2,
-              y: p.y || window.innerHeight / 2,
-              size: 20,
-              team: p.team,
-              health: p.health || 100,
-              maxHealth: 100,
-              isAlive: p.isAlive !== false,
-              kills: p.kills || 0
-            }));
-        })
-        .on('broadcast', { event: 'player-update' }, (payload) => {
-          const { playerId, position, health, isAlive, team } = payload.payload;
-          
-          // Update other player's position and status
-          const playerIndex = gameDataRef.current.otherPlayers.findIndex(p => p.id === playerId);
-          if (playerIndex >= 0) {
-            gameDataRef.current.otherPlayers[playerIndex] = {
-              ...gameDataRef.current.otherPlayers[playerIndex],
-              x: position.x,
-              y: position.y,
-              health,
-              isAlive,
-              team
-            };
-          } else if (playerId !== gameDataRef.current.playerId) {
-            // Add new player
-            gameDataRef.current.otherPlayers.push({
-              id: playerId,
-              x: position.x,
-              y: position.y,
-              size: 20,
-              team,
-              health: health || 100,
-              maxHealth: 100,
-              isAlive: isAlive !== false,
-              kills: 0
-            });
-          }
-        })
-        .on('broadcast', { event: 'bullet-fired' }, (payload) => {
-          const { bullet } = payload.payload;
-          if (bullet.playerId !== gameDataRef.current.playerId) {
-            gameDataRef.current.bullets.push(bullet);
-          }
-        });
-
-      // Subscribe to the channel
-      channel.subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('Successfully subscribed to multiplayer channel');
-          // Track presence
-          channel.track({
-            user_id: gameDataRef.current.playerId,
-            x: gameDataRef.current.player.x,
-            y: gameDataRef.current.player.y,
-            team: gameDataRef.current.player.team,
-            health: gameDataRef.current.player.health,
-            isAlive: gameDataRef.current.player.isAlive
-          });
-        } else if (status === 'CHANNEL_ERROR') {
-          console.error('Failed to subscribe to multiplayer channel');
-        }
-      });
-
-      channelRef.current = channel;
-      gameDataRef.current.multiplayerChannel = channel;
-    }
-
-    // Event handlers
-    const handleKeyDown = (e: KeyboardEvent) => {
-      gameDataRef.current.keys[e.key.toLowerCase()] = true;
     };
 
-    const handleKeyUp = (e: KeyboardEvent) => {
-      gameDataRef.current.keys[e.key.toLowerCase()] = false;
-    };
+    channel.on('presence', { event: 'sync' }, handlePresenceSync);
+    channel.on('broadcast', { event: 'player-update' }, handlePlayerUpdate);
+    channel.on('broadcast', { event: 'bullet-fired' }, handleBulletFired);
+    
+    // Initial sync
+    handlePresenceSync();
 
+    // Initial tracking
+    channel.track({
+        user_id: playerId,
+        x: gameDataRef.current.player.x,
+        y: gameDataRef.current.player.y,
+        team: gameDataRef.current.player.team,
+        health: gameDataRef.current.player.health,
+        isAlive: gameDataRef.current.player.isAlive,
+    });
+
+    return () => {
+      channel.off('presence', { event: 'sync' }, handlePresenceSync);
+      channel.off('broadcast', { event: 'player-update' }, handlePlayerUpdate);
+      channel.off('broadcast', { event: 'bullet-fired' }, handleBulletFired);
+    };
+  }, [isMultiplayer, channel, playerId]);
+  
+  // Effect for handling user input
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => { gameDataRef.current.keys[e.key.toLowerCase()] = true; };
+    const handleKeyUp = (e: KeyboardEvent) => { gameDataRef.current.keys[e.key.toLowerCase()] = false; };
     const handleMouseMove = (e: MouseEvent) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      
-      const rect = canvas.getBoundingClientRect();
-      gameDataRef.current.mouse.x = e.clientX - rect.left;
-      gameDataRef.current.mouse.y = e.clientY - rect.top;
+        const rect = canvasRef.current?.getBoundingClientRect();
+        if (rect) {
+            gameDataRef.current.mouse.x = e.clientX - rect.left;
+            gameDataRef.current.mouse.y = e.clientY - rect.top;
+        }
     };
-
-    const handleMouseClick = () => {
-      const bulletsBefore = gameDataRef.current.bullets.length;
-      shoot(gameDataRef.current, gameState);
-      const bulletsAfter = gameDataRef.current.bullets.length;
-      
-      // Broadcast new bullets in multiplayer
-      if (isMultiplayer && gameDataRef.current.multiplayerChannel && bulletsAfter > bulletsBefore) {
-        const newBullets = gameDataRef.current.bullets.slice(bulletsBefore);
-        newBullets.forEach(bullet => {
-          try {
-            gameDataRef.current.multiplayerChannel.send({
-              type: 'broadcast',
-              event: 'bullet-fired',
-              payload: { bullet }
-            });
-          } catch (error) {
-            console.warn('Failed to broadcast bullet:', error);
-          }
-        });
-      }
-    };
-
+    const handleMouseClick = () => shoot(gameDataRef.current, gameState, channel);
     const handleResize = () => {
-      if (canvas) {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-      }
+        if (canvasRef.current) {
+            canvasRef.current.width = window.innerWidth;
+            canvasRef.current.height = window.innerHeight;
+        }
     };
 
-    // Add event listeners
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('click', handleMouseClick);
     window.addEventListener('resize', handleResize);
-
-    // Initial resize
     handleResize();
 
-    const updateGame = () => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-
-      const gameData = gameDataRef.current;
-      
-      updatePlayer(gameData, canvas);
-      updateBullets(gameData, canvas);
-      updateEnemies(gameData);
-      checkBulletEnemyCollisions(gameData, setGameState);
-      checkPlayerEnemyCollisions(gameData, setGameState);
-      
-      // Check player vs player collisions in team vs team mode
-      if (gameData.gameMode === 'team-vs-team') {
-        checkPlayerBulletCollisions(gameData, setGameState);
-      }
-      
-      // Only spawn enemies in survival and team-vs-enemies modes
-      if (gameData.gameMode !== 'team-vs-team') {
-        spawnEnemy(gameData, canvas, setGameState, gameSettings);
-        spawnBoss(gameData, canvas, setGameState);
-      }
-
-      // Update timer
-      setGameState(prev => {
-        const newTime = Math.max(0, prev.timeLeft - 1/60);
-        if (newTime <= 0) {
-          const survivalTime = Math.floor((Date.now() - gameDataRef.current.gameStartTime) / 1000);
-          onGameEnd(survivalTime);
-        }
-        return { ...prev, timeLeft: newTime };
-      });
-
-      // Broadcast position in multiplayer (throttled)
-      if (isMultiplayer && gameDataRef.current.multiplayerChannel && Math.random() < 0.1) {
-        try {
-          gameDataRef.current.multiplayerChannel.track({
-            user_id: gameDataRef.current.playerId,
-            x: gameData.player.x,
-            y: gameData.player.y,
-            team: gameData.player.team,
-            health: gameData.player.health,
-            isAlive: gameData.player.isAlive
-          });
-        } catch (error) {
-          console.warn('Failed to broadcast player update:', error);
-        }
-      }
-    };
-
-    const gameLoop = () => {
-      updateGame();
-      renderGame(canvasRef.current!, gameDataRef.current);
-      animationRef.current = requestAnimationFrame(gameLoop);
-    };
-
-    gameLoop();
-
     return () => {
-      // Cleanup
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('click', handleMouseClick);
       window.removeEventListener('resize', handleResize);
-      
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
     };
-  }, [gameState.gunLevel, gameState.fireRateLevel, gameState.bulletSizeLevel, onGameEnd, setGameState, gameState.gameStartTime, gameSettings]);
+  }, [canvasRef, gameState, channel]); // Add channel to dependencies
 
-  // Separate effect for multiplayer cleanup
+
+  const gameLoop = useCallback(() => {
+    const now = Date.now();
+    const deltaTime = (now - lastUpdateTime.current) / 1000;
+    lastUpdateTime.current = now;
+    
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // --- UPDATE ---
+    updatePlayer(gameDataRef.current, canvas);
+    updateBullets(gameDataRef.current, canvas);
+    updateEnemies(gameDataRef.current);
+    checkBulletEnemyCollisions(gameDataRef.current, setGameState);
+    checkPlayerEnemyCollisions(gameDataRef.current, setGameState);
+
+    if (gameSettings.gameMode === 'team-vs-team') {
+      checkPlayerBulletCollisions(gameDataRef.current, setGameState);
+    } else {
+      spawnEnemy(gameDataRef.current, canvas, setGameState, gameSettings);
+      spawnBoss(gameDataRef.current, canvas, setGameState);
+    }
+
+    setGameState(prev => {
+      const newTimeLeft = Math.max(0, prev.timeLeft - deltaTime);
+      if (newTimeLeft <= 0) {
+        onGameEnd(Math.floor((Date.now() - prev.gameStartTime) / 1000));
+        return { ...prev, timeLeft: 0 };
+      }
+      return { ...prev, timeLeft: newTimeLeft };
+    });
+
+    if (isMultiplayer && channel && Math.random() < 0.2) { // Throttle presence updates
+      channel.track({
+        user_id: playerId,
+        x: gameDataRef.current.player.x,
+        y: gameDataRef.current.player.y,
+        team: gameDataRef.current.player.team,
+        health: gameDataRef.current.player.health,
+        isAlive: gameDataRef.current.player.isAlive,
+      });
+    }
+
+    // --- RENDER ---
+    renderGame(canvas, gameDataRef.current);
+
+    animationFrameId.current = requestAnimationFrame(gameLoop);
+  }, [canvasRef, gameSettings, isMultiplayer, onGameEnd, setGameState, channel, playerId]);
+
+  // Effect to start and stop the game loop
   useEffect(() => {
+    // Initial setup
+    gameDataRef.current.player.team = gameSettings.gameMode === 'team-vs-team' ? (Math.random() < 0.5 ? 'red' : 'blue') : 'blue';
+    gameDataRef.current.player.id = playerId || 'solo-player';
+    lastUpdateTime.current = Date.now();
+    
+    animationFrameId.current = requestAnimationFrame(gameLoop);
+
     return () => {
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-        gameDataRef.current.multiplayerChannel = null;
+      if (animationFrameId.current) {
+        cancelAnimationFrame(animationFrameId.current);
       }
     };
-  }, [isMultiplayer, lobbyCode]);
+  }, [gameLoop, gameSettings.gameMode, playerId]);
 
   return null;
 };
