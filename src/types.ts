@@ -1,3 +1,5 @@
+// src/types.ts (Updated)
+
 import { RealtimeChannel } from "@supabase/supabase-js";
 
 // The screen currently being displayed (menu, lobby, game, etc.)
@@ -47,7 +49,8 @@ export interface Enemy {
     speed: number;
     health: number;
     maxHealth: number;
-    type: 'normal' | 'fast' | 'strong' | 'boss';
+    isBoss: boolean; // <-- ADD THIS
+    darkness: number; // <-- ADD THIS
 }
 
 // Represents a bullet
@@ -60,9 +63,10 @@ export interface Bullet {
     damage: number;
     playerId: string;
     team?: 'red' | 'blue';
+    color: string; // <-- ADD THIS
 }
 
-// The core data managed inside the game loop, not exposed to React state directly
+// The core data managed inside the game loop
 export interface GameData {
     player: Player;
     otherPlayers: Player[];
@@ -73,4 +77,5 @@ export interface GameData {
     lastShot: number;
     lastEnemySpawn: number;
     lastBossSpawn: number;
+    gameMode: GameSettings['gameMode']; // <-- ADD THIS
 }
