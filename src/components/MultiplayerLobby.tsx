@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { supabase } from '@/integrations/supabase/client';
@@ -16,6 +17,7 @@ interface MultiplayerLobbyProps {
 
 const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) => {
   const [lobbyCode, setLobbyCode] = useState('');
+  const [inputCode, setInputCode] = useState('');
   const [isHost, setIsHost] = useState(false);
   const [connectedPlayers, setConnectedPlayers] = useState<string[]>([]);
   const [gameSettings, setGameSettings] = useState<GameSettings>({
@@ -43,16 +45,22 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
   };
 
   const joinLobby = async () => {
-    if (!lobbyCode) return;
+    if (!inputCode || inputCode.length !== 6) {
+      alert('Please enter a valid 6-character lobby code');
+      return;
+    }
     
-    const channel = supabase.channel(`game-lobby-${lobbyCode}`)
+    const code = inputCode.toUpperCase();
+    setLobbyCode(code);
+    
+    const channel = supabase.channel(`game-lobby-${code}`)
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState();
         const players = Object.keys(state);
         setConnectedPlayers(players);
       })
       .on('broadcast', { event: 'start-game' }, (payload) => {
-        onStartGame(lobbyCode, payload.settings);
+        onStartGame(code, payload.settings);
       })
       .subscribe();
       
@@ -67,6 +75,17 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
       payload: { settings: gameSettings }
     });
     onStartGame(lobbyCode, gameSettings);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+    setInputCode(value);
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && inputCode.length === 6) {
+      joinLobby();
+    }
   };
 
   return (
@@ -89,16 +108,18 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
             
             <input
               type="text"
-              placeholder="Enter Lobby Code"
-              value={lobbyCode}
-              onChange={(e) => setLobbyCode(e.target.value.toUpperCase())}
-              className="w-full bg-gray-800 border-2 border-gray-600 text-white px-4 py-3 rounded-xl text-center font-mono text-lg"
+              placeholder="Enter 6-digit code"
+              value={inputCode}
+              onChange={handleInputChange}
+              onKeyPress={handleKeyPress}
+              className="w-full bg-gray-800 border-2 border-gray-600 text-white px-4 py-3 rounded-xl text-center font-mono text-lg tracking-wider"
               maxLength={6}
+              autoComplete="off"
             />
             
             <Button 
               onClick={joinLobby}
-              disabled={!lobbyCode}
+              disabled={inputCode.length !== 6}
               className="w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-400 hover:to-purple-400 text-white text-xl px-6 py-4 rounded-xl font-bold disabled:opacity-50"
             >
               🚪 JOIN LOBBY
@@ -108,7 +129,7 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
           <div className="space-y-6">
             <div className="bg-gradient-to-r from-yellow-600 to-orange-600 text-black p-4 rounded-xl">
               <div className="text-lg font-bold">Lobby Code:</div>
-              <div className="text-3xl font-mono font-bold">{lobbyCode}</div>
+              <div className="text-3xl font-mono font-bold tracking-wider">{lobbyCode}</div>
             </div>
             
             <div className="text-left">
