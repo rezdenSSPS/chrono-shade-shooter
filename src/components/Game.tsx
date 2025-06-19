@@ -171,6 +171,7 @@ const Game = () => {
           gameSettings={gameSettings}
           channel={channelRef.current}
           playerId={playerIdRef.current}
+          isHost={isHost}
         />
       )}
       
