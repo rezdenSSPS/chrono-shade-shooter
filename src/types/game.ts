@@ -67,5 +67,5 @@ export interface GameData {
   gameMode: 'survival' | 'team-vs-enemies' | 'team-vs-team';
   playerId: string;
   isHost: boolean;
-  lastEnemySync: number;
+  lastSyncTime: number;
 }
