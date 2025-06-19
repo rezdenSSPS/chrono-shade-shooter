@@ -1,19 +1,21 @@
+// src/hooks/useGameLoop.tsx
+
 import { useEffect, useRef, useCallback } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import type { GameData, GameSettings, GameUIState, Player, Bullet } from '@/types';
+import { renderGame } from '@/utils/gameRenderer'; // Make sure this import is correct
 
 // --- PLACEHOLDER UTILS ---
-// You should have your own implementations for these in your /src/utils/ folder.
-const renderGame = (canvas: HTMLCanvasElement, gameData: GameData) => { /* Your drawing logic here */ };
-const updatePlayer = (gameData: GameData, canvas: HTMLCanvasElement) => { /* Your player movement logic */ };
-const updateBullets = (gameData: GameData, canvas: HTMLCanvasElement) => { /* Your bullet movement logic */ };
-const updateEnemies = (gameData: GameData) => { /* Your enemy movement logic */ };
-const checkBulletEnemyCollisions = (gameData: GameData, setGameState: any) => { /* Your collision logic */ };
-const checkPlayerEnemyCollisions = (gameData: GameData, setGameState: any) => { /* Your collision logic */ };
-const checkPlayerBulletCollisions = (gameData: GameData, setGameState: any) => { /* Your collision logic for PvP */ };
-const spawnEnemy = (gameData: GameData, canvas: HTMLCanvasElement, setGameState: any, gameSettings?: GameSettings) => { /* Your enemy spawning logic */ };
-const spawnBoss = (gameData: GameData, canvas: HTMLCanvasElement, setGameState: any) => { /* Your boss spawning logic */ };
-const shoot = (gameData: GameData, gameState: GameUIState, channel?: RealtimeChannel | null) => { /* Your shooting logic, it should now handle broadcasting bullets */ };
+// You should have your own implementations for these.
+const updatePlayer = (gameData: GameData, canvas: HTMLCanvasElement) => { /* Your logic */ };
+const updateBullets = (gameData: GameData, canvas: HTMLCanvasElement) => { /* Your logic */ };
+const updateEnemies = (gameData: GameData) => { /* Your logic */ };
+const checkBulletEnemyCollisions = (gameData: GameData, setGameState: any) => { /* Your logic */ };
+const checkPlayerEnemyCollisions = (gameData: GameData, setGameState: any) => { /* Your logic */ };
+const checkPlayerBulletCollisions = (gameData: GameData, setGameState: any) => { /* Your logic for PvP */ };
+const spawnEnemy = (gameData: GameData, canvas: HTMLCanvasElement, setGameState: any, gameSettings?: GameSettings) => { /* Your logic */ };
+const spawnBoss = (gameData: GameData, canvas: HTMLCanvasElement, setGameState: any) => { /* Your logic */ };
+const shoot = (gameData: GameData, gameState: GameUIState, channel?: RealtimeChannel | null) => { /* Your logic, must now handle broadcasting bullets */ };
 // --- END PLACEHOLDER UTILS ---
 
 interface UseGameLoopProps {
@@ -56,44 +58,55 @@ const useGameLoop = ({
     lastShot: 0,
     lastEnemySpawn: 0,
     lastBossSpawn: 0,
+    gameMode: gameSettings.gameMode,
   });
   const animationFrameId = useRef<number>();
   const lastUpdateTime = useRef(Date.now());
 
   // Effect to set up and tear down multiplayer listeners
   useEffect(() => {
-    if (!isMultiplayer || !channel) return;
+    if (!isMultiplayer || !channel || !playerId) return;
+
+    console.log(`[GameLoop] Setting up listeners for channel: ${channel.topic} and player: ${playerId}`);
 
     const handlePresenceSync = () => {
       const presenceState = channel.presenceState();
+      console.log("[Presence SYNC] Raw State: ", presenceState);
+
       const players = Object.values(presenceState)
         .flatMap((presences: any) => presences)
-        .filter((p: any) => p.user_id !== playerId);
+        .filter((p: any) => p.user_id !== playerId); // Filter out myself
+
+      console.log("[Presence SYNC] Filtered others: ", players);
 
       gameDataRef.current.otherPlayers = players.map((p: any): Player => ({
-        id: p.user_id, x: p.x, y: p.y, health: p.health, maxHealth: 100,
-        isAlive: p.isAlive, team: p.team, size: 20, kills: p.kills || 0,
+        id: p.user_id,
+        x: p.x,
+        y: p.y,
+        health: p.health,
+        maxHealth: 100,
+        isAlive: p.isAlive,
+        team: p.team,
+        role: p.role,
+        size: 20,
+        kills: p.kills || 0,
       }));
-    };
-    
-    const handlePlayerUpdate = (payload: any) => {
-       // This should be handled by presence, but broadcast can be used for intermittent events
+        
+      console.log("[Presence SYNC] Updated gameDataRef.otherPlayers: ", gameDataRef.current.otherPlayers);
     };
 
-    const handleBulletFired = (payload: { bullet: Bullet }) => {
-      if (payload.bullet.playerId !== playerId) {
-        gameDataRef.current.bullets.push(payload.bullet);
+    const handleBulletFired = (payload: { payload: { bullet: Bullet } }) => {
+      if (payload.payload.bullet.playerId !== playerId) {
+        console.log("[Broadcast] Received bullet from other player", payload.payload.bullet);
+        gameDataRef.current.bullets.push(payload.payload.bullet);
       }
     };
 
     channel.on('presence', { event: 'sync' }, handlePresenceSync);
-    channel.on('broadcast', { event: 'player-update' }, handlePlayerUpdate);
     channel.on('broadcast', { event: 'bullet-fired' }, handleBulletFired);
     
-    // Initial sync
-    handlePresenceSync();
-
-    // Initial tracking
+    // Initial track to announce presence
+    console.log(`[GameLoop] First time tracking for player ${playerId}`);
     channel.track({
         user_id: playerId,
         x: gameDataRef.current.player.x,
@@ -101,12 +114,13 @@ const useGameLoop = ({
         team: gameDataRef.current.player.team,
         health: gameDataRef.current.player.health,
         isAlive: gameDataRef.current.player.isAlive,
+        role: 'player',
     });
 
     return () => {
-      channel.off('presence', { event: 'sync' }, handlePresenceSync);
-      channel.off('broadcast', { event: 'player-update' }, handlePlayerUpdate);
-      channel.off('broadcast', { event: 'bullet-fired' }, handleBulletFired);
+        console.log(`[GameLoop] Cleaning up listeners for channel: ${channel.topic}`);
+        channel.off('presence', { event: 'sync' }, handlePresenceSync);
+        channel.off('broadcast', { event: 'bullet-fired' }, handleBulletFired);
     };
   }, [isMultiplayer, channel, playerId]);
   
@@ -145,7 +159,7 @@ const useGameLoop = ({
     };
   }, [canvasRef, gameState, channel]); // Add channel to dependencies
 
-
+  // The main game loop function, wrapped in useCallback for performance
   const gameLoop = useCallback(() => {
     const now = Date.now();
     const deltaTime = (now - lastUpdateTime.current) / 1000;
@@ -177,7 +191,7 @@ const useGameLoop = ({
       return { ...prev, timeLeft: newTimeLeft };
     });
 
-    if (isMultiplayer && channel && Math.random() < 0.2) { // Throttle presence updates
+    if (isMultiplayer && channel && playerId && Math.random() < 0.2) { // Throttle presence updates
       channel.track({
         user_id: playerId,
         x: gameDataRef.current.player.x,
@@ -196,7 +210,7 @@ const useGameLoop = ({
 
   // Effect to start and stop the game loop
   useEffect(() => {
-    // Initial setup
+    // Initial player setup
     gameDataRef.current.player.team = gameSettings.gameMode === 'team-vs-team' ? (Math.random() < 0.5 ? 'red' : 'blue') : 'blue';
     gameDataRef.current.player.id = playerId || 'solo-player';
     lastUpdateTime.current = Date.now();
