@@ -59,6 +59,7 @@ const useGameLoop = ({
     if (!isMultiplayer || !channel || !playerId) return;
 
     const handlePresenceSync = () => {
+        if(!channelRef.current) return;
         const presenceState = channel.presenceState();
         const players = Object.values(presenceState).flatMap((p: any) => p).filter((p: any) => p.user_id !== playerId);
         
@@ -79,16 +80,16 @@ const useGameLoop = ({
         gameDataRef.current.otherPlayers = gameDataRef.current.otherPlayers.filter(op => players.some((p: any) => p.user_id === op.id));
     };
     
-    const handleBulletFired = (payload: { payload: { bullet: Bullet } }) => {
-      if (payload.payload.bullet.playerId !== playerId) gameDataRef.current.bullets.push(payload.payload.bullet);
+    const handleBulletFired = ({ payload }: { payload: { bullet: Bullet } }) => {
+      if (payload.bullet.playerId !== playerId) gameDataRef.current.bullets.push(payload.bullet);
     };
 
-    const handlePlayerMove = (payload: { payload: { id: string, x: number, y: number } }) => {
-        if (payload.payload.id !== playerId) {
-            const movedPlayer = gameDataRef.current.otherPlayers.find(p => p.id === payload.payload.id);
+    const handlePlayerMove = ({ payload }: { payload: { id: string, x: number, y: number } }) => {
+        if (payload.id !== playerId) {
+            const movedPlayer = gameDataRef.current.otherPlayers.find(p => p.id === payload.id);
             if (movedPlayer) {
-                movedPlayer.targetX = payload.payload.x;
-                movedPlayer.targetY = payload.payload.y;
+                movedPlayer.targetX = payload.x;
+                movedPlayer.targetY = payload.y;
             }
         }
     };
@@ -108,6 +109,9 @@ const useGameLoop = ({
         const levelKey = `${payload.upgradeType}Level` as keyof GameUIState;
         setGameState(prev => ({ ...prev, timeLeft: payload.newTimeLeft, [levelKey]: (prev[levelKey] as number) + 1 }));
     };
+
+    const channelRef = useRef(channel);
+    channelRef.current = channel;
 
     channel.on('presence', { event: 'sync' }, handlePresenceSync);
     channel.on('broadcast', { event: 'bullet-fired' }, handleBulletFired);
@@ -136,7 +140,10 @@ const useGameLoop = ({
             gameDataRef.current.mouse.y = e.clientY - rect.top;
         }
     };
-    const handleMouseClick = () => shoot(gameDataRef.current, gameState, channel);
+    const gameStateRef = useRef(gameState);
+    gameStateRef.current = gameState;
+    const handleMouseClick = () => shoot(gameDataRef.current, gameStateRef.current, channel);
+
     const handleResize = () => {
         if (canvasRef.current) {
             canvasRef.current.width = window.innerWidth;
@@ -156,7 +163,7 @@ const useGameLoop = ({
       window.removeEventListener('click', handleMouseClick);
       window.removeEventListener('resize', handleResize);
     };
-  }, [canvasRef, gameState, channel]);
+  }, [canvasRef, channel, gameState]);
   useEffect(inputEffect, [inputEffect]);
 
   const gameLoop = useCallback(() => {
