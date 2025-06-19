@@ -23,7 +23,7 @@ const Game = () => {
   });
 
   const channelRef = useRef<RealtimeChannel | null>(null);
-  const playerIdRef = useRef<string>(Math.random().toString(36).substring(2, 10));
+  const playerIdRef = useRef<string>(`p_${Math.random().toString(36).substring(2, 9)}`);
 
   const cleanupChannel = useCallback(() => {
     if (channelRef.current) {
@@ -39,19 +39,19 @@ const Game = () => {
   const handleStartGame = (code: string, settings: GameSettings) => {
     setLobbyCode(code);
     setGameSettings(settings);
-    setWasMultiplayer(true); // Mark this session as multiplayer
+    setWasMultiplayer(true);
     setGameScreen('multiplayerGame');
   };
-  
+
   const setupChannel = (code: string) => {
     if (channelRef.current) {
       supabase.removeChannel(channelRef.current);
     }
     const channelName = `game-lobby-${code}`;
     const channel = supabase.channel(channelName, {
-        config: {
-            presence: { key: playerIdRef.current }
-        }
+      config: {
+        presence: { key: playerIdRef.current },
+      },
     });
 
     channel
@@ -72,8 +72,8 @@ const Game = () => {
         handleStartGame(code, payload.payload.settings);
       })
       .on('broadcast', { event: 'settings-update' }, (payload) => {
-        if (!isHost) { // Clients update their settings from the host
-            setGameSettings(payload.payload.settings);
+        if (!isHost) {
+          setGameSettings(payload.payload.settings);
         }
       });
 
@@ -114,7 +114,7 @@ const Game = () => {
       channelRef.current.send({
         type: 'broadcast',
         event: 'settings-update',
-        payload: { settings: newSettings }
+        payload: { settings: newSettings },
       });
     }
   };
@@ -124,7 +124,7 @@ const Game = () => {
       channelRef.current.send({
         type: 'broadcast',
         event: 'start-game',
-        payload: { settings: gameSettings }
+        payload: { settings: gameSettings },
       });
     }
   };
