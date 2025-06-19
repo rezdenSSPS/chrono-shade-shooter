@@ -19,7 +19,7 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
   const [lobbyCode, setLobbyCode] = useState('');
   const [inputCode, setInputCode] = useState('');
   const [isHost, setIsHost] = useState(false);
-  const [connectedPlayers, setConnectedPlayers] = useState<string[]>([]);
+  const [connectedPlayers, setConnectedPlayers] = useState<any[]>([]);
   const [gameSettings, setGameSettings] = useState<GameSettings>({
     enemyCount: 5,
     enemySpeed: 1,
@@ -29,7 +29,6 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
 
   const channelRef = useRef<any>(null);
 
-  // Cleanup function
   const cleanupChannel = () => {
     if (channelRef.current) {
       supabase.removeChannel(channelRef.current);
@@ -37,89 +36,63 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
     }
   };
 
-  const createLobby = async () => {
-    // Cleanup any existing channel
-    cleanupChannel();
+  // Cleanup on component unmount
+  useEffect(() => {
+    return () => cleanupChannel();
+  }, []);
 
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    setLobbyCode(code);
-    setIsHost(true);
-    
+  const setupChannel = (code: string, amIHost: boolean) => {
+    cleanupChannel(); // Ensure no old channels are lingering
+
     const channelName = `game-lobby-${code}`;
     const channel = supabase.channel(channelName);
-    
+    channelRef.current = channel;
+
     channel
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState();
-        const players = Object.keys(state);
+        const players = Object.values(state).flat();
         setConnectedPlayers(players);
       })
       .on('broadcast', { event: 'start-game' }, (payload) => {
-        // All players, including host, start the game upon receiving this message.
-        onStartGame(code, payload.settings || gameSettings, isHost);
+        // Use the 'amIHost' parameter passed during setup to avoid stale state
+        onStartGame(code, payload.payload.settings || gameSettings, amIHost);
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log(`${amIHost ? 'Host' : 'Player'} subscribed to lobby ${code}`);
+          const role = amIHost ? 'host' : 'player';
+          channel.track({ user_id: `${role}-${Math.random()}` });
+        }
       });
-
-    channel.subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        console.log('Host subscribed to lobby');
-        // Track host presence
-        channel.track({ user_id: 'host', role: 'host' });
-      }
-    });
-
-    channelRef.current = channel;
   };
 
-  const joinLobby = async () => {
+  const createLobby = () => {
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    setLobbyCode(code);
+    setIsHost(true);
+    setupChannel(code, true);
+  };
+
+  const joinLobby = () => {
     if (!inputCode || inputCode.length !== 6) {
       alert('Please enter a valid 6-character lobby code');
       return;
     }
-    
-    // Cleanup any existing channel
-    cleanupChannel();
-
     const code = inputCode.toUpperCase();
     setLobbyCode(code);
-    
-    const channelName = `game-lobby-${code}`;
-    const channel = supabase.channel(channelName);
-    
-    channel
-      .on('presence', { event: 'sync' }, () => {
-        const state = channel.presenceState();
-        const players = Object.keys(state);
-        setConnectedPlayers(players);
-      })
-      .on('broadcast', { event: 'start-game' }, (payload) => {
-        // All players, including host, start the game upon receiving this message.
-        onStartGame(code, payload.settings || gameSettings, isHost);
-      });
-
-    channel.subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        console.log('Player joined lobby');
-        // Track player presence
-        const playerId = Math.random().toString();
-        channel.track({ user_id: playerId, role: 'player' });
-      }
-    });
-
-    channelRef.current = channel;
+    setIsHost(false);
+    setupChannel(code, false);
   };
 
   const startMultiplayerGame = () => {
     if (channelRef.current) {
-      // Host broadcasts the start signal.
       channelRef.current.send({
         type: 'broadcast',
         event: 'start-game',
         payload: { settings: gameSettings }
       });
     }
-    // The host no longer calls onStartGame directly.
-    // Instead, it will start along with all clients when it receives its own broadcast.
-    // This ensures everyone starts in sync and the isHost flag is handled correctly.
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -132,13 +105,6 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
       joinLobby();
     }
   };
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      cleanupChannel();
-    };
-  }, []);
 
   return (
     <div className="text-center text-white bg-gradient-to-b from-purple-900 via-blue-900 to-indigo-900 min-h-screen flex flex-col justify-center items-center">
@@ -191,7 +157,7 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
                   <div className="text-gray-400">Waiting for players...</div>
                 ) : (
                   connectedPlayers.map((player, index) => (
-                    <div key={player} className="text-green-400">
+                    <div key={player.user_id} className="text-green-400">
                       Player {index + 1} {isHost && index === 0 && '(Host)'}
                     </div>
                   ))
@@ -202,7 +168,6 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
             {isHost && (
               <div className="space-y-4">
                 <h3 className="text-xl font-bold text-purple-400">⚙️ Game Settings</h3>
-                
                 <div className="space-y-3">
                   <div className="space-y-2">
                     <span className="text-cyan-400 font-bold">Game Mode:</span>
@@ -216,53 +181,17 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
                       <option value="team-vs-team">⚔️ Team vs Team</option>
                     </select>
                   </div>
-                  
                   <div className="flex justify-between items-center">
-                    <span>Enemy Count:</span>
-                    <input
-                      type="range"
-                      min="3"
-                      max="20"
-                      value={gameSettings.enemyCount}
-                      onChange={(e) => setGameSettings(prev => ({ ...prev, enemyCount: parseInt(e.target.value) }))}
-                      className="w-24"
-                    />
-                    <span className="text-yellow-400 font-bold">{gameSettings.enemyCount}</span>
+                    <span>Enemy Count:</span><input type="range" min="3" max="20" value={gameSettings.enemyCount} onChange={(e) => setGameSettings(prev => ({ ...prev, enemyCount: parseInt(e.target.value) }))} className="w-24" /><span className="text-yellow-400 font-bold">{gameSettings.enemyCount}</span>
                   </div>
-                  
                   <div className="flex justify-between items-center">
-                    <span>Enemy Speed:</span>
-                    <input
-                      type="range"
-                      min="0.5"
-                      max="3"
-                      step="0.5"
-                      value={gameSettings.enemySpeed}
-                      onChange={(e) => setGameSettings(prev => ({ ...prev, enemySpeed: parseFloat(e.target.value) }))}
-                      className="w-24"
-                    />
-                    <span className="text-yellow-400 font-bold">{gameSettings.enemySpeed}x</span>
+                    <span>Enemy Speed:</span><input type="range" min="0.5" max="3" step="0.5" value={gameSettings.enemySpeed} onChange={(e) => setGameSettings(prev => ({ ...prev, enemySpeed: parseFloat(e.target.value) }))} className="w-24" /><span className="text-yellow-400 font-bold">{gameSettings.enemySpeed}x</span>
                   </div>
-                  
                   <div className="flex justify-between items-center">
-                    <span>Enemy Damage:</span>
-                    <input
-                      type="range"
-                      min="1"
-                      max="5"
-                      value={gameSettings.enemyDamage}
-                      onChange={(e) => setGameSettings(prev => ({ ...prev, enemyDamage: parseInt(e.target.value) }))}
-                      className="w-24"
-                    />
-                    <span className="text-yellow-400 font-bold">{gameSettings.enemyDamage}x</span>
+                    <span>Enemy Damage:</span><input type="range" min="1" max="5" value={gameSettings.enemyDamage} onChange={(e) => setGameSettings(prev => ({ ...prev, enemyDamage: parseInt(e.target.value) }))} className="w-24" /><span className="text-yellow-400 font-bold">{gameSettings.enemyDamage}x</span>
                   </div>
                 </div>
-                
-                <Button 
-                  onClick={startMultiplayerGame}
-                  disabled={connectedPlayers.length === 0}
-                  className="w-full bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-400 hover:to-pink-400 text-white text-xl px-6 py-4 rounded-xl font-bold disabled:opacity-50"
-                >
+                <Button onClick={startMultiplayerGame} disabled={connectedPlayers.length === 0} className="w-full bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-400 hover:to-pink-400 text-white text-xl px-6 py-4 rounded-xl font-bold disabled:opacity-50">
                   🚀 START GAME
                 </Button>
               </div>
@@ -270,10 +199,7 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
           </div>
         )}
         
-        <Button 
-          onClick={onBackToMenu}
-          className="mt-6 bg-gray-700 hover:bg-gray-600 text-white px-6 py-3 rounded-xl"
-        >
+        <Button onClick={onBackToMenu} className="mt-6 bg-gray-700 hover:bg-gray-600 text-white px-6 py-3 rounded-xl">
           ← Back to Menu
         </Button>
       </div>
