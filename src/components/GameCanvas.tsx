@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';More actions
+import React, { useRef, useEffect, useState } from 'react';
 import { Button } from './ui/button';
 import useGameLoop from '@/hooks/useGameLoop';
 
@@ -12,44 +12,25 @@ interface GameCanvasProps {
     enemyDamage: number;
     gameMode?: 'survival' | 'team-vs-enemies' | 'team-vs-team';
   };
-
 }
 
 const GameCanvas = ({ onGameEnd, isMultiplayer = false, lobbyCode, gameSettings }: GameCanvasProps) => {
-
-
-
-
-
-
   const canvasRef = useRef<HTMLCanvasElement>(null);
-
   const [gameState, setGameState] = useState({
     timeLeft: gameSettings?.gameMode === 'team-vs-team' ? 300 : 180, // 5 minutes for PvP, 3 for others
     gunLevel: 1,
     fireRateLevel: 1,
     bulletSizeLevel: 1,
-@@ -30,248 +38,210 @@
+    enemiesKilled: 0,
+    bossActive: false,
+    gameStartTime: Date.now(),
+    wave: 1,
+    gameMode: gameSettings?.gameMode || 'survival',
+    teamScores: { red: 0, blue: 0 },
     playersAlive: 1
   });
 
   const gameLoop = useGameLoop(canvasRef, gameState, setGameState, onGameEnd, isMultiplayer, lobbyCode, gameSettings);
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
   const purchaseGunUpgrade = () => {
     const cost = getGunUpgradeCost();
@@ -260,7 +241,6 @@ const GameCanvas = ({ onGameEnd, isMultiplayer = false, lobbyCode, gameSettings 
               )}
             </div>
           </div>
-
         </div>
       </div>
 
