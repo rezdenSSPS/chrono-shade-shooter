@@ -28,7 +28,7 @@ export const shoot = (gameData: GameData, gameState: GameUIState, channel?: Real
         damage: 10 + (gameState.gunLevel * 5),
         playerId: gameData.player.id,
         team: gameData.player.team,
-        color: gameData.player.team === 'red' ? '#ff8080' : '#8080ff',
+        color: gameData.player.team === 'red' ? '#ff8080' : '#80a0ff',
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
     };
@@ -72,10 +72,10 @@ export const updateEnemies = (gameData: GameData) => {
   });
 };
 
-export const spawnEnemy = (gameData: GameData, canvas: HTMLCanvasElement, gameSettings: GameSettings) => {
+export const spawnEnemy = (gameData: GameData, canvas: HTMLCanvasElement, gameSettings: GameSettings): Enemy | null => {
     const now = Date.now();
-    if (now - gameData.lastEnemySpawn < (3000 / (gameSettings.enemyCount / 5))) return;
-    if (gameData.enemies.length >= gameSettings.enemyCount) return;
+    if (now - gameData.lastEnemySpawn < (3000 / (gameSettings.enemyCount / 10))) return null;
+    if (gameData.enemies.length >= gameSettings.enemyCount) return null;
     gameData.lastEnemySpawn = now;
     const side = Math.floor(Math.random() * 4);
     let x, y;
@@ -83,17 +83,16 @@ export const spawnEnemy = (gameData: GameData, canvas: HTMLCanvasElement, gameSe
     else if (side === 1) { x = canvas.width; y = Math.random() * canvas.height; }
     else if (side === 2) { x = Math.random() * canvas.width; y = 0; }
     else { x = Math.random() * canvas.width; y = canvas.height; }
-    const newEnemy: Enemy = {
-        id: `enemy-${Date.now()}-${Math.random()}`, x, y, size: 20,
+    return {
+        id: `enemy-${Date.now()}-${Math.random()}`, x, y, size: 25,
         health: 50, maxHealth: 50, speed: gameSettings.enemySpeed, isBoss: false,
-        color: `hsl(0, 0%, ${Math.random() * 40}%)`
+        darkness: Math.random() * 0.6 + 0.2, isAlive: true
     };
-    return newEnemy;
 };
 
 export const spawnBoss = (gameData: GameData, canvas: HTMLCanvasElement, setGameState: React.Dispatch<React.SetStateAction<GameUIState>>) => {};
 
-// Collision Logic
+// Collision Logic (Host only)
 export const checkBulletEnemyCollisions = (gameData: GameData, channel?: RealtimeChannel) => {
     for (let i = gameData.bullets.length - 1; i >= 0; i--) {
         for (let j = gameData.enemies.length - 1; j >= 0; j--) {
@@ -105,9 +104,10 @@ export const checkBulletEnemyCollisions = (gameData: GameData, channel?: Realtim
                 gameData.bullets.splice(i, 1);
                 enemy.health -= bullet.damage;
                 if (channel) {
-                    channel.send({ type: 'broadcast', event: 'enemy-hit', payload: { enemyId: enemy.id, newHealth: enemy.health } });
                     if (enemy.health <= 0) {
                         channel.send({ type: 'broadcast', event: 'enemy-killed', payload: { enemyId: enemy.id, killerId: bullet.playerId } });
+                    } else {
+                        channel.send({ type: 'broadcast', event: 'enemy-hit', payload: { enemyId: enemy.id, newHealth: enemy.health } });
                     }
                 }
                 break;
