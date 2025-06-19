@@ -53,15 +53,15 @@ const Game = () => {
           .flatMap((presences: any) => presences)
           .map((p: any): Player => ({
             id: p.user_id, role: p.role, team: p.team,
-            x: 0, y: 0, size: 25, health: 100, maxHealth: 100, isAlive: true, kills: 0,
+            x: 0, y: 0, size: 20, health: 100, maxHealth: 100, isAlive: true, kills: 0,
           }));
         setConnectedPlayers(players);
       })
       .on('broadcast', { event: 'start-game' }, (payload) => {
-        if (!isHost) handleStartGame(code, payload.payload.settings);
-      })
-      .on('broadcast', { event: 'settings-update' }, (payload) => {
-        if(!isHost) setGameSettings(payload.payload.settings);
+        // Non-hosts start the game when they receive the broadcast
+        if (!isHost) {
+          handleStartGame(code, payload.payload.settings);
+        }
       });
 
     channelRef.current = channel;
@@ -74,9 +74,7 @@ const Game = () => {
     setIsHost(true);
     setLobbyCode(code);
     channel.subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') {
-        await channel.track({ user_id: playerIdRef.current, role: 'host' });
-      }
+      if (status === 'SUBSCRIBED') await channel.track({ user_id: playerIdRef.current, role: 'host' });
     });
   };
 
@@ -85,28 +83,19 @@ const Game = () => {
     setIsHost(false);
     setLobbyCode(code);
     channel.subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') {
-        await channel.track({ user_id: playerIdRef.current, role: 'player' });
-      }
+      if (status === 'SUBSCRIBED') await channel.track({ user_id: playerIdRef.current, role: 'player' });
     });
-  };
-
-  const updateGameSettings = (newSettings: GameSettings) => {
-    setGameSettings(newSettings);
-    if (isHost && channelRef.current) {
-      channelRef.current.send({
-        type: 'broadcast', event: 'settings-update', payload: { settings: newSettings }
-      });
-    }
   };
 
   const startMultiplayerGame = () => {
     if (isHost && channelRef.current) {
+      // The host sends the start command to others
       channelRef.current.send({
         type: 'broadcast', event: 'start-game', payload: { settings: gameSettings }
       });
+      // The host also starts their own game
+      handleStartGame(lobbyCode, gameSettings);
     }
-    handleStartGame(lobbyCode, gameSettings);
   };
 
   const backToMenu = () => {
@@ -131,7 +120,11 @@ const Game = () => {
         <GameCanvas onGameEnd={endGame} gameSettings={{ gameMode: 'survival', enemyCount: 10, enemySpeed: 1, enemyDamage: 1, bossEnabled: false }} />
       )}
       {gameScreen === 'multiplayerLobby' && (
-        <MultiplayerLobby lobbyCode={lobbyCode} isHost={isHost} connectedPlayers={connectedPlayers} gameSettings={gameSettings} onCreateLobby={createLobby} onJoinLobby={joinLobby} onUpdateSettings={updateGameSettings} onStartGame={startMultiplayerGame} onBackToMenu={backToMenu} />
+        <MultiplayerLobby 
+          lobbyCode={lobbyCode} isHost={isHost} connectedPlayers={connectedPlayers}
+          gameSettings={gameSettings} onCreateLobby={createLobby} onJoinLobby={joinLobby}
+          onUpdateSettings={() => {}} onStartGame={startMultiplayerGame} onBackToMenu={backToMenu}
+        />
       )}
       {gameScreen === 'multiplayerGame' && channelRef.current && (
         <GameCanvas onGameEnd={endGame} isMultiplayer={true} isHost={isHost} lobbyCode={lobbyCode} gameSettings={gameSettings} channel={channelRef.current} playerId={playerIdRef.current} />
