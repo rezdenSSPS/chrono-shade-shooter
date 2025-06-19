@@ -1,23 +1,29 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Button } from './ui/button';
 import useGameLoop from '@/hooks/useGameLoop';
+import type { RealtimeChannel } from '@supabase/supabase-js';
+import type { GameSettings } from '@/types';
 
 interface GameCanvasProps {
   onGameEnd: (score: number) => void;
   isMultiplayer?: boolean;
   lobbyCode?: string;
-  gameSettings?: {
-    enemyCount: number;
-    enemySpeed: number;
-    enemyDamage: number;
-    gameMode?: 'survival' | 'team-vs-enemies' | 'team-vs-team';
-  };
+  gameSettings: GameSettings;
+  channel?: RealtimeChannel;
+  playerId?: string;
 }
 
-const GameCanvas = ({ onGameEnd, isMultiplayer = false, lobbyCode, gameSettings }: GameCanvasProps) => {
+const GameCanvas = ({ 
+    onGameEnd, 
+    isMultiplayer = false, 
+    lobbyCode, 
+    gameSettings,
+    channel,
+    playerId
+}: GameCanvasProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [gameState, setGameState] = useState({
-    timeLeft: gameSettings?.gameMode === 'team-vs-team' ? 300 : 180, // 5 minutes for PvP, 3 for others
+    timeLeft: gameSettings?.gameMode === 'team-vs-team' ? 300 : 180,
     gunLevel: 1,
     fireRateLevel: 1,
     bulletSizeLevel: 1,
@@ -25,13 +31,23 @@ const GameCanvas = ({ onGameEnd, isMultiplayer = false, lobbyCode, gameSettings 
     bossActive: false,
     gameStartTime: Date.now(),
     wave: 1,
-    gameMode: gameSettings?.gameMode || 'survival',
+    gameMode: gameSettings.gameMode,
     teamScores: { red: 0, blue: 0 },
-    playersAlive: 1
+    playersAlive: 1,
   });
 
-  const gameLoop = useGameLoop(canvasRef, gameState, setGameState, onGameEnd, isMultiplayer, lobbyCode, gameSettings);
+  useGameLoop({
+    canvasRef,
+    gameState,
+    setGameState,
+    onGameEnd,
+    isMultiplayer,
+    gameSettings,
+    channel,
+    playerId
+  });
 
+  // ... (rest of the component remains the same)
   const purchaseGunUpgrade = () => {
     const cost = getGunUpgradeCost();
     if (gameState.timeLeft >= cost && gameState.gunLevel < 10) {
