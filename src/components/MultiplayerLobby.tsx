@@ -1,3 +1,4 @@
+// src/components/MultiplayerLobby.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { supabase } from '@/integrations/supabase/client';
@@ -10,7 +11,7 @@ interface GameSettings {
 }
 
 interface MultiplayerLobbyProps {
-  onStartGame: (lobbyCode: string, settings: GameSettings) => void;
+  onStartGame: (lobbyCode: string, settings: GameSettings, isHost: boolean) => void;
   onBackToMenu: () => void;
 }
 
@@ -54,7 +55,8 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
         setConnectedPlayers(players);
       })
       .on('broadcast', { event: 'start-game' }, (payload) => {
-        onStartGame(code, payload.settings || gameSettings);
+        // All players, including host, start the game upon receiving this message.
+        onStartGame(code, payload.settings || gameSettings, isHost);
       });
 
     channel.subscribe((status) => {
@@ -90,7 +92,8 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
         setConnectedPlayers(players);
       })
       .on('broadcast', { event: 'start-game' }, (payload) => {
-        onStartGame(code, payload.settings || gameSettings);
+        // All players, including host, start the game upon receiving this message.
+        onStartGame(code, payload.settings || gameSettings, isHost);
       });
 
     channel.subscribe((status) => {
@@ -107,13 +110,16 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
 
   const startMultiplayerGame = () => {
     if (channelRef.current) {
+      // Host broadcasts the start signal.
       channelRef.current.send({
         type: 'broadcast',
         event: 'start-game',
         payload: { settings: gameSettings }
       });
     }
-    onStartGame(lobbyCode, gameSettings);
+    // The host no longer calls onStartGame directly.
+    // Instead, it will start along with all clients when it receives its own broadcast.
+    // This ensures everyone starts in sync and the isHost flag is handled correctly.
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
