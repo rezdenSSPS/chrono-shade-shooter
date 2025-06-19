@@ -1,189 +1,202 @@
-import { useEffect, useRef, useCallback } from 'react';
+import React, { useRef, useState } from 'react';
+import { Button } from './ui/button';
+import useGameLoop from '@/hooks/useGameLoop';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import type { GameData, GameSettings, GameUIState, Player, Bullet } from '@/types';
-import { renderGame } from '@/utils/gameRenderer';
-import {
-  updatePlayer,
-  updateOtherPlayers,
-  updateBullets,
-  updateEnemies,
-  checkBulletEnemyCollisions,
-  checkPlayerEnemyCollisions,
-  checkPlayerBulletCollisions,
-  spawnEnemy,
-  spawnBoss,
-  shoot
-} from '@/utils/gameLogic';
+import type { GameSettings, GameUIState } from '@/types';
 
-interface UseGameLoopProps {
-  canvasRef: React.RefObject<HTMLCanvasElement>;
-  gameState: GameUIState;
-  setGameState: React.Dispatch<React.SetStateAction<GameUIState>>;
+interface GameCanvasProps {
   onGameEnd: (score: number) => void;
   isMultiplayer?: boolean;
   isHost?: boolean;
+  lobbyCode?: string;
   gameSettings: GameSettings;
   channel?: RealtimeChannel;
   playerId?: string;
-  setPlacement: React.Dispatch<React.SetStateAction<number | null>>;
 }
 
-const useGameLoop = ({
-  canvasRef,
-  gameState,
-  setGameState,
+const GameCanvas = ({
   onGameEnd,
   isMultiplayer = false,
   isHost = false,
+  lobbyCode,
   gameSettings,
   channel,
-  playerId,
-  setPlacement,
-}: UseGameLoopProps) => {
-  const gameDataRef = useRef<GameData>({
-    player: {
-      id: playerId || 'solo', x: window.innerWidth / 2, y: window.innerHeight / 2,
-      targetX: window.innerWidth / 2, targetY: window.innerHeight / 2,
-      size: 20, health: 100, maxHealth: 100, isAlive: true, kills: 0,
-    },
-    otherPlayers: [], enemies: [], bullets: [], keys: {},
-    mouse: { x: 0, y: 0 }, lastShot: 0, lastEnemySpawn: 0, lastBossSpawn: 0,
-    gameMode: gameSettings.gameMode, gameStartTime: Date.now(),
+  playerId
+}: GameCanvasProps) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [uiState, setUiState] = useState<GameUIState>({
+    timeLeft: gameSettings?.gameMode === 'team-vs-team' ? 300 : 180,
+    gunLevel: 1,
+    fireRateLevel: 1,
+    bulletSizeLevel: 1,
+    enemiesKilled: 0,
+    bossActive: false,
+    gameStartTime: Date.now(),
+    wave: 1,
+    gameMode: gameSettings.gameMode,
+    teamScores: { red: 0, blue: 0 },
   });
-  const localPlayerDied = useRef(false);
-  const animationFrameId = useRef<number>();
-  const lastUpdateTime = useRef(Date.now());
-  const lastPositionBroadcast = useRef(0);
 
-  useEffect(() => {
-    if (!isMultiplayer || !channel || !playerId) return;
+  const [placement, setPlacement] = useState<number | null>(null);
+  const isSpectating = placement !== null;
 
-    const handlePresenceSync = () => {
-        const presenceState = channel.presenceState();
-        const players = Object.values(presenceState).flatMap((p: any) => p).filter((p: any) => p.user_id !== playerId);
-        
-        players.forEach((p: any) => {
-            let existingPlayer = gameDataRef.current.otherPlayers.find(op => op.id === p.user_id);
-            if (existingPlayer) {
-                if (p.isAlive !== undefined) existingPlayer.isAlive = p.isAlive;
-            } else {
-                gameDataRef.current.otherPlayers.push({
-                    id: p.user_id, x: p.x, y: p.y,
-                    targetX: p.x, targetY: p.y,
-                    health: p.health || 100, maxHealth: 100, isAlive: p.isAlive !== false,
-                    team: p.team, role: p.role, size: 20, kills: p.kills || 0,
-                });
-            }
-        });
-        gameDataRef.current.otherPlayers = gameDataRef.current.otherPlayers.filter(op => players.some((p: any) => p.user_id === op.id));
-    };
-    
-    const handleBulletFired = (payload: { payload: { bullet: Bullet } }) => {
-      if (payload.payload.bullet.playerId !== playerId) gameDataRef.current.bullets.push(payload.payload.bullet);
-    };
+  useGameLoop({
+    canvasRef,
+    gameState: uiState,
+    setGameState: setUiState,
+    onGameEnd,
+    isMultiplayer,
+    isHost,
+    gameSettings,
+    channel,
+    playerId,
+    setPlacement,
+  });
 
-    const handlePlayerMove = (payload: { payload: { id: string, x: number, y: number } }) => {
-        if (payload.payload.id !== playerId) {
-            const movedPlayer = gameDataRef.current.otherPlayers.find(p => p.id === payload.payload.id);
-            if (movedPlayer) {
-                movedPlayer.targetX = payload.payload.x;
-                movedPlayer.targetY = payload.payload.y;
-            }
-        }
-    };
-
-    const handleRequestUpgrade = ({ payload }: { payload: { upgradeType: string }}) => {
-        if (!isHost) return;
-        const costMap = { gun: [0, 15, 25, 40, 60, 85, 115, 150, 190, 235, 285], fireRate: [0, 10, 18, 28, 42, 60, 82, 108, 138, 172, 210], bulletSize: [0, 20, 35, 55, 80, 110, 145, 185, 230, 280, 335] };
-        const levelKey = `${payload.upgradeType}Level` as keyof GameUIState;
-        const currentLevel = gameState[levelKey] as number;
-        const cost = costMap[payload.upgradeType as keyof typeof costMap][currentLevel];
-        if (gameState.timeLeft >= cost && currentLevel < 10) {
-            channel.send({ type: 'broadcast', event: 'apply-upgrade', payload: { upgradeType: payload.upgradeType, newTimeLeft: gameState.timeLeft - cost } });
-        }
-    };
-
-    const handleApplyUpgrade = ({ payload }: { payload: { upgradeType: string, newTimeLeft: number }}) => {
-        const levelKey = `${payload.upgradeType}Level` as keyof GameUIState;
-        setGameState(prev => ({ ...prev, timeLeft: payload.newTimeLeft, [levelKey]: (prev[levelKey] as number) + 1 }));
-    };
-
-    channel.on('presence', { event: 'sync' }, handlePresenceSync);
-    channel.on('broadcast', { event: 'bullet-fired' }, handleBulletFired);
-    channel.on('broadcast', { event: 'player-move' }, handlePlayerMove);
-    channel.on('broadcast', { event: 'request-upgrade' }, handleRequestUpgrade);
-    channel.on('broadcast', { event: 'apply-upgrade' }, handleApplyUpgrade);
-    
-    channel.track({ user_id: playerId, x: gameDataRef.current.player.x, y: gameDataRef.current.player.y, team: gameDataRef.current.player.team, health: 100, isAlive: true, role: 'player' });
-
-    return () => {
-        channel.off('presence', { event: 'sync' }, handlePresenceSync);
-        channel.off('broadcast', { event: 'bullet-fired' }, handleBulletFired);
-        channel.off('broadcast', { event: 'player-move' }, handlePlayerMove);
-        channel.off('broadcast', { event: 'request-upgrade' }, handleRequestUpgrade);
-        channel.off('broadcast', { event: 'apply-upgrade' }, handleApplyUpgrade);
-    };
-  }, [isMultiplayer, channel, playerId, isHost, gameState, setGameState]);
-  
-  useEffect(() => { /* Input handler effect - no changes */ }, [canvasRef, gameState, channel]);
-
-  const gameLoop = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    updatePlayer(gameDataRef.current, canvas);
-    updateOtherPlayers(gameDataRef.current);
-    updateBullets(gameDataRef.current, canvas);
-    updateEnemies(gameDataRef.current);
-    checkBulletEnemyCollisions(gameDataRef.current, setGameState);
-    checkPlayerEnemyCollisions(gameDataRef.current, setGameState);
-    if (gameDataRef.current.gameMode === 'team-vs-team') {
-      checkPlayerBulletCollisions(gameDataRef.current, setGameState);
-    } else {
-      spawnEnemy(gameDataRef.current, canvas, setGameState, gameSettings);
-      spawnBoss(gameDataRef.current, canvas, setGameState);
+  const purchaseUpgrade = (upgradeType: 'gun' | 'fireRate' | 'bulletSize') => {
+    if (isMultiplayer && channel) {
+      channel.send({
+        type: 'broadcast',
+        event: 'request-upgrade',
+        payload: { upgradeType }
+      });
+    } else { // Single Player
+      const costMap: Record<string, number[]> = {
+        gun: [0, 15, 25, 40, 60, 85, 115, 150, 190, 235, 285],
+        fireRate: [0, 10, 18, 28, 42, 60, 82, 108, 138, 172, 210],
+        bulletSize: [0, 20, 35, 55, 80, 110, 145, 185, 230, 280, 335],
+      };
+      const levelKey = `${upgradeType}Level` as 'gunLevel' | 'fireRateLevel' | 'bulletSizeLevel';
+      const currentLevel = uiState[levelKey] as number;
+      const cost = costMap[upgradeType][currentLevel];
+      if (uiState.timeLeft >= cost && currentLevel < 10) {
+        setUiState(prev => ({ ...prev, timeLeft: prev.timeLeft - cost, [levelKey]: currentLevel + 1 }));
+      }
     }
-    
-    if (isMultiplayer && gameDataRef.current.gameMode === 'team-vs-team' && !localPlayerDied.current) {
-        if (!gameDataRef.current.player.isAlive) {
-            localPlayerDied.current = true;
-            const alivePlayers = gameDataRef.current.otherPlayers.filter(p => p.isAlive);
-            setPlacement(alivePlayers.length + 1);
-            if (channel && playerId) channel.track({ user_id: playerId, isAlive: false });
-        }
+  };
+
+  const getGunUpgradeCost = () => {
+    const costs = [0, 15, 25, 40, 60, 85, 115, 150, 190, 235, 285];
+    return costs[uiState.gunLevel] || 300;
+  };
+
+  const getFireRateUpgradeCost = () => {
+    const costs = [0, 10, 18, 28, 42, 60, 82, 108, 138, 172, 210];
+    return costs[uiState.fireRateLevel] || 250;
+  };
+
+  const getBulletSizeUpgradeCost = () => {
+    const costs = [0, 20, 35, 55, 80, 110, 145, 185, 230, 280, 335];
+    return costs[uiState.bulletSizeLevel] || 375;
+  };
+
+  const getGunUpgradeText = () => {
+    if (uiState.gunLevel >= 10) return "🔥 MAXED";
+    const cost = getGunUpgradeCost();
+    const gunNames = ['Pistol', 'Shotgun', 'SMG', 'Rifle', 'LMG', 'Plasma', 'Laser', 'Rail Gun', 'Ion Cannon', 'Annihilator'];
+    const nextGun = gunNames[uiState.gunLevel] || 'Ultimate';
+    return `${nextGun} - ${cost}s`;
+  };
+
+  const getFireRateUpgradeText = () => {
+    if (uiState.fireRateLevel >= 10) return "⚡ MAXED";
+    const cost = getFireRateUpgradeCost();
+    return `Fire Rate Lv${uiState.fireRateLevel + 1} - ${cost}s`;
+  };
+
+  const getBulletSizeUpgradeText = () => {
+    if (uiState.bulletSizeLevel >= 10) return "💥 MAXED";
+    const cost = getBulletSizeUpgradeCost();
+    return `Bullet Size Lv${uiState.bulletSizeLevel + 1} - ${cost}s`;
+  };
+
+  const canUpgradeGun = uiState.timeLeft >= getGunUpgradeCost() && uiState.gunLevel < 10;
+  const canUpgradeFireRate = uiState.timeLeft >= getFireRateUpgradeCost() && uiState.fireRateLevel < 10;
+  const canUpgradeBulletSize = uiState.timeLeft >= getBulletSizeUpgradeCost() && uiState.bulletSizeLevel < 10;
+  const displayTime = Math.floor(uiState.timeLeft);
+  const getGameModeDisplay = () => {
+    switch (gameSettings?.gameMode) {
+      case 'team-vs-enemies': return '🤝 TEAM VS ENEMIES';
+      case 'team-vs-team': return '⚔️ TEAM VS TEAM';
+      default: return '🏆 SURVIVAL';
     }
+  };
+  const showUpgrades = gameSettings?.gameMode !== 'team-vs-team';
 
-    const now = Date.now();
-    setGameState(prev => {
-        const newTimeLeft = Math.max(0, prev.timeLeft - (now - lastUpdateTime.current)/1000);
-        if (newTimeLeft <= 0 && prev.timeLeft > 0) {
-            onGameEnd(Math.floor((now - gameDataRef.current.gameStartTime) / 1000));
-            return { ...prev, timeLeft: 0 };
-        }
-        return { ...prev, timeLeft: newTimeLeft };
-    });
-    lastUpdateTime.current = now;
-
-    if (isMultiplayer && channel && playerId) {
-        if (now - lastPositionBroadcast.current > 33) {
-            lastPositionBroadcast.current = now;
-            channel.send({ type: 'broadcast', event: 'player-move', payload: { id: playerId, x: gameDataRef.current.player.x, y: gameDataRef.current.player.y } });
-        }
-    }
-
-    renderGame(canvas, gameDataRef.current);
-    animationFrameId.current = requestAnimationFrame(gameLoop);
-  }, [gameSettings, isMultiplayer, onGameEnd, setGameState, channel, playerId, canvasRef, setPlacement, gameState]);
-
-  useEffect(() => {
-    gameDataRef.current.player.team = gameSettings.gameMode === 'team-vs-team' ? (Math.random() < 0.5 ? 'red' : 'blue') : 'blue';
-    gameDataRef.current.player.id = playerId || 'solo-player';
-    lastUpdateTime.current = Date.now();
-    animationFrameId.current = requestAnimationFrame(gameLoop);
-    return () => { if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current); };
-  }, [gameLoop, gameSettings.gameMode, playerId]);
-
-  return null;
+  return (
+    <div className="fixed inset-0 bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex flex-col">
+      <div className="relative z-10 bg-gradient-to-r from-black/80 via-gray-900/80 to-black/80 backdrop-blur-md border-b border-cyan-400/30 p-4">
+        <div className="flex items-center justify-between max-w-screen-2xl mx-auto">
+          <div className="flex-1 flex justify-start">
+            {showUpgrades && (
+              <div className="flex gap-3">
+                <Button onClick={() => purchaseUpgrade('gun')} disabled={!canUpgradeGun} className={`text-xs px-3 py-2 rounded-lg font-bold transition-all ${canUpgradeGun ? 'bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-400 hover:to-emerald-400 text-black' : 'bg-gray-700/70 text-gray-400 cursor-not-allowed'}`}>
+                  🔫 {getGunUpgradeText()}
+                </Button>
+                <Button onClick={() => purchaseUpgrade('fireRate')} disabled={!canUpgradeFireRate} className={`text-xs px-3 py-2 rounded-lg font-bold transition-all ${canUpgradeFireRate ? 'bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white' : 'bg-gray-700/70 text-gray-400 cursor-not-allowed'}`}>
+                  ⚡ {getFireRateUpgradeText()}
+                </Button>
+                <Button onClick={() => purchaseUpgrade('bulletSize')} disabled={!canUpgradeBulletSize} className={`text-xs px-3 py-2 rounded-lg font-bold transition-all ${canUpgradeBulletSize ? 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-400 hover:to-pink-400 text-white' : 'bg-gray-700/70 text-gray-400 cursor-not-allowed'}`}>
+                  💥 {getBulletSizeUpgradeText()}
+                </Button>
+              </div>
+            )}
+          </div>
+          <div className="flex-1 flex justify-center">
+            <div className="text-center">
+              <div className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-1 rounded-lg text-sm font-bold mb-2">{getGameModeDisplay()}</div>
+              <div className="bg-gradient-to-r from-yellow-500 to-orange-500 text-black px-6 py-2 rounded-xl border-2 border-yellow-400 shadow-lg">
+                <div className="text-2xl font-bold">⏱️ {displayTime}s</div>
+              </div>
+            </div>
+          </div>
+          <div className="flex-1 flex justify-end">
+            <div className="flex items-center gap-6 text-sm">
+              {gameSettings?.gameMode === 'team-vs-team' ? (
+                <>
+                  <div className="flex items-center gap-2"><span className="text-red-400 font-bold">🔴 Red:</span><span className="text-white font-bold">{uiState.teamScores?.red || 0}</span></div>
+                  <div className="flex items-center gap-2"><span className="text-blue-400 font-bold">🔵 Blue:</span><span className="text-white font-bold">{uiState.teamScores?.blue || 0}</span></div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2"><span className="text-purple-400 font-bold">Wave:</span><span className="text-white font-bold">{uiState.wave}</span></div>
+                  <div className="flex items-center gap-2"><span className="text-red-400 font-bold">Kills:</span><span className="text-white font-bold">{uiState.enemiesKilled}</span></div>
+                </>
+              )}
+              {showUpgrades && (
+                <>
+                  <div className="flex items-center gap-2"><span className="text-green-400 font-bold">Gun:</span><span className="text-white font-bold">Lv{uiState.gunLevel}</span></div>
+                  <div className="flex items-center gap-2"><span className="text-orange-400 font-bold">Rate:</span><span className="text-white font-bold">Lv{uiState.fireRateLevel}</span></div>
+                  <div className="flex items-center gap-2"><span className="text-purple-400 font-bold">Size:</span><span className="text-white font-bold">Lv{uiState.bulletSizeLevel}</span></div>
+                </>
+              )}
+              {uiState.bossActive && <div className="text-red-500 font-bold animate-pulse">⚠️ BOSS!</div>}
+              {isMultiplayer && <div className="text-green-400 font-bold">🌐 {lobbyCode}</div>}
+            </div>
+          </div>
+        </div>
+      </div>
+      {isSpectating && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/70 text-white pointer-events-none">
+          <h1 className="text-7xl font-bold text-red-500 animate-pulse">YOU DIED</h1>
+          <p className="text-4xl mt-4">You placed #{placement}</p>
+          <p className="text-xl mt-2 text-gray-300">Spectating remaining players...</p>
+        </div>
+      )}
+      <canvas ref={canvasRef} className="flex-1 w-full h-full bg-gray-900" style={{ cursor: isSpectating ? 'default' : 'none' }} />
+      <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-10">
+        <div className="bg-black/60 text-white px-4 py-2 rounded-lg border border-cyan-400/30 backdrop-blur-sm">
+          <div className="text-sm flex items-center gap-4">
+            <span>⌨️ WASD - Move</span>
+            <span>🖱️ Mouse - Aim & Shoot</span>
+            {gameSettings?.gameMode === 'team-vs-team' ? (<span>⚔️ Eliminate Enemy Team</span>) :
+              gameSettings?.gameMode === 'team-vs-enemies' ? (<span>🤝 Work Together vs Enemies</span>) :
+                (<><span>💰 Time = Currency</span><span>🎯 Dark Enemies = More Time</span></>)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 };
 
-export default useGameLoop;
+export default GameCanvas;
