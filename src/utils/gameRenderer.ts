@@ -1,70 +1,62 @@
-// src/utils/gameRenderer.ts (Updated and Refactored)
-
 import type { GameData, Player, Enemy, Bullet } from '@/types';
 
 function drawHumanSilhouette(
   ctx: CanvasRenderingContext2D,
-  entity: Player | Enemy, // Accept the whole object
+  entity: Player | Enemy,
   isMainPlayer: boolean = false
 ) {
-  const { x, y, size, isAlive, team, health, maxHealth } = entity as Player; // Assume Player for properties like team
-  const { isBoss } = entity as Enemy; // Assume Enemy for boss property
+  const { x, y, size, isAlive } = entity;
+  const { team, health, maxHealth } = entity as Player;
+  const { isBoss, darkness } = entity as Enemy;
 
   if (!isAlive) {
-    // Draw dead player as gray outline
-    ctx.strokeStyle = '#666666';
-    ctx.lineWidth = 2;
-    ctx.fillStyle = 'transparent';
+    ctx.globalAlpha = 0.5;
+  }
+
+  if (isMainPlayer) {
+      ctx.fillStyle = '#00ff00';
+  } else if (team) { // It's another player
+      ctx.fillStyle = team === 'red' ? '#E53E3E' : '#3B82F6';
+  } else { // It's an enemy
+      const grayValue = Math.floor((1 - (darkness || 0.5)) * 200) + 55;
+      ctx.fillStyle = `rgb(${grayValue}, ${grayValue}, ${grayValue})`;
+  }
+  
+  if (isMainPlayer) {
+    ctx.strokeStyle = '#00ff00';
+    ctx.lineWidth = 3;
+  } else if (team) {
+    ctx.strokeStyle = team === 'red' ? '#ff0000' : '#0000ff';
+    ctx.lineWidth = 4;
   } else {
-    // Determine color based on type and team
-    if (isMainPlayer) {
-        ctx.fillStyle = '#00ff00';
-    } else if (team) { // It's another player
-        ctx.fillStyle = team === 'red' ? '#E53E3E' : '#3B82F6';
-    } else { // It's an enemy
-        const darkness = (entity as Enemy).darkness || 1;
-        const grayValue = Math.floor((1 - darkness) * 200) + 55;
-        ctx.fillStyle = `rgb(${grayValue}, ${grayValue}, ${grayValue})`;
-    }
-    
-    if (isMainPlayer) {
-      ctx.strokeStyle = '#00ff00'; // Green outline for main player
-      ctx.lineWidth = 3;
-    } else if (team) {
-      ctx.strokeStyle = team === 'red' ? '#ff0000' : '#0000ff';
-      ctx.lineWidth = 4;
-    } else {
-      ctx.strokeStyle = ctx.fillStyle;
-      ctx.lineWidth = 1;
-    }
+    ctx.strokeStyle = ctx.fillStyle;
+    ctx.lineWidth = 1;
   }
 
   const scale = size / 25;
-
-  // Head, Body, Arms, Legs (same as your original code)
   ctx.beginPath();
   ctx.arc(x, y - 12 * scale, 6 * scale, 0, Math.PI * 2);
-  if (isAlive) ctx.fill();
+  ctx.fill();
   ctx.stroke();
-
   ctx.beginPath();
   ctx.rect(x - 4 * scale, y - 6 * scale, 8 * scale, 15 * scale);
-  if (isAlive) ctx.fill();
+  ctx.fill();
   ctx.stroke();
-
   ctx.beginPath();
   ctx.rect(x - 12 * scale, y - 3 * scale, 6 * scale, 12 * scale);
   ctx.rect(x + 6 * scale, y - 3 * scale, 6 * scale, 12 * scale);
-  if (isAlive) ctx.fill();
+  ctx.fill();
   ctx.stroke();
-
   ctx.beginPath();
-  ctx.rect(x - 3 * scale, y + 9 * scale, 5 * scale, 12 * scale);
-  ctx.rect(x - 2 * scale, y + 9 * scale, 5 * scale, 12 * scale);
-  if (isAlive) ctx.fill();
+  ctx.rect(x - 4 * scale, y + 9 * scale, 6 * scale, 12 * scale);
+  ctx.rect(x - 2 * scale, y + 9 * scale, 6 * scale, 12 * scale);
+  ctx.fill();
   ctx.stroke();
+  
+  if (!isAlive) {
+    ctx.globalAlpha = 1.0;
+  }
 
-  // Boss glow
   if (isBoss) {
       ctx.shadowColor = '#ff0000';
       ctx.shadowBlur = 25;
@@ -76,20 +68,16 @@ function drawHumanSilhouette(
       ctx.shadowBlur = 0;
   }
 
-  // Health bar
   if (isAlive && health !== undefined && maxHealth !== undefined && health < maxHealth) {
     const barWidth = size * 1.5;
     const barHeight = 6;
     const barX = x - barWidth / 2;
     const barY = y - size - 15;
-    
     ctx.fillStyle = '#333333';
     ctx.fillRect(barX, barY, barWidth, barHeight);
-    
     const healthPercent = health / maxHealth;
     ctx.fillStyle = healthPercent > 0.5 ? '#00ff00' : healthPercent > 0.25 ? '#ffff00' : '#ff0000';
     ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
-    
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 1;
     ctx.strokeRect(barX, barY, barWidth, barHeight);
@@ -120,12 +108,10 @@ function drawBullet(ctx: CanvasRenderingContext2D, bullet: Bullet) {
     ctx.shadowBlur = 0;
 }
 
-
 export function renderGame(canvas: HTMLCanvasElement, gameData: GameData) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
-  // Clear canvas and draw background
   const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
   gradient.addColorStop(0, '#0f0f23');
   gradient.addColorStop(0.5, '#1a1a2e');
@@ -133,31 +119,26 @@ export function renderGame(canvas: HTMLCanvasElement, gameData: GameData) {
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Draw main player
-  drawHumanSilhouette(ctx, gameData.player, true);
-
-  // Draw other players
   gameData.otherPlayers.forEach(player => {
     drawHumanSilhouette(ctx, player);
-    
-    // Player name/ID
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '12px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText(player.id.substring(0, 8), player.x, player.y - player.size - 25);
+    if(player.isAlive) {
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(player.id.substring(0, 8), player.x, player.y - player.size - 25);
+    }
   });
 
-  // Draw enemies
   gameData.enemies.forEach(enemy => {
     drawHumanSilhouette(ctx, enemy);
   });
 
-  // Draw bullets
   gameData.bullets.forEach(bullet => {
     drawBullet(ctx, bullet);
   });
+  
+  drawHumanSilhouette(ctx, gameData.player, true);
 
-  // Draw crosshair
   if (gameData.player.isAlive) {
     drawCrosshair(ctx, gameData.mouse);
   }
