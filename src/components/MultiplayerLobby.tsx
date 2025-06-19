@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';More actions
+import React, { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -14,7 +14,17 @@ interface MultiplayerLobbyProps {
   onBackToMenu: () => void;
 }
 
-@@ -28,7 +28,6 @@
+const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) => {
+  const [lobbyCode, setLobbyCode] = useState('');
+  const [inputCode, setInputCode] = useState('');
+  const [isHost, setIsHost] = useState(false);
+  const [connectedPlayers, setConnectedPlayers] = useState<string[]>([]);
+  const [gameSettings, setGameSettings] = useState<GameSettings>({
+    enemyCount: 5,
+    enemySpeed: 1,
+    enemyDamage: 1,
+    gameMode: 'survival'
+  });
 
   const channelRef = useRef<any>(null);
 
@@ -22,7 +32,8 @@ interface MultiplayerLobbyProps {
   const cleanupChannel = () => {
     if (channelRef.current) {
       supabase.removeChannel(channelRef.current);
-@@ -37,30 +36,26 @@
+      channelRef.current = null;
+    }
   };
 
   const createLobby = async () => {
@@ -44,7 +55,6 @@ interface MultiplayerLobbyProps {
       })
       .on('broadcast', { event: 'start-game' }, (payload) => {
         onStartGame(code, payload.settings || gameSettings);
-
       });
 
     channel.subscribe((status) => {
@@ -54,14 +64,18 @@ interface MultiplayerLobbyProps {
         channel.track({ user_id: 'host', role: 'host' });
       }
     });
-@@ -73,30 +68,26 @@
+
+    channelRef.current = channel;
+  };
+
+  const joinLobby = async () => {
+    if (!inputCode || inputCode.length !== 6) {
       alert('Please enter a valid 6-character lobby code');
       return;
     }
     
     // Cleanup any existing channel
     cleanupChannel();
-
 
     const code = inputCode.toUpperCase();
     setLobbyCode(code);
@@ -77,7 +91,6 @@ interface MultiplayerLobbyProps {
       })
       .on('broadcast', { event: 'start-game' }, (payload) => {
         onStartGame(code, payload.settings || gameSettings);
-
       });
 
     channel.subscribe((status) => {
@@ -87,26 +100,30 @@ interface MultiplayerLobbyProps {
         const playerId = Math.random().toString();
         channel.track({ user_id: playerId, role: 'player' });
       }
-@@ -107,13 +98,17 @@
+    });
+
+    channelRef.current = channel;
+  };
 
   const startMultiplayerGame = () => {
     if (channelRef.current) {
-
       channelRef.current.send({
         type: 'broadcast',
         event: 'start-game',
         payload: { settings: gameSettings }
-
-
-
       });
-
     }
     onStartGame(lobbyCode, gameSettings);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-@@ -127,7 +122,6 @@
+    const value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+    setInputCode(value);
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && inputCode.length === 6) {
+      joinLobby();
     }
   };
 
@@ -114,7 +131,8 @@ interface MultiplayerLobbyProps {
   useEffect(() => {
     return () => {
       cleanupChannel();
-@@ -136,143 +130,9 @@
+    };
+  }, []);
 
   return (
     <div className="text-center text-white bg-gradient-to-b from-purple-900 via-blue-900 to-indigo-900 min-h-screen flex flex-col justify-center items-center">
@@ -249,7 +267,7 @@ interface MultiplayerLobbyProps {
         <Button 
           onClick={onBackToMenu}
           className="mt-6 bg-gray-700 hover:bg-gray-600 text-white px-6 py-3 rounded-xl"
-        >Add commentMore actions
+        >
           ← Back to Menu
         </Button>
       </div>
