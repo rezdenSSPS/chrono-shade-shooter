@@ -7,6 +7,7 @@ import type { GameSettings } from '@/types';
 interface GameCanvasProps {
   onGameEnd: (score: number) => void;
   isMultiplayer?: boolean;
+  isHost?: boolean;
   lobbyCode?: string;
   gameSettings: GameSettings;
   channel?: RealtimeChannel;
@@ -16,6 +17,7 @@ interface GameCanvasProps {
 const GameCanvas = ({ 
     onGameEnd, 
     isMultiplayer = false, 
+    isHost = false, // 👈 ADD THIS LINE
     lobbyCode, 
     gameSettings,
     channel,
@@ -42,9 +44,11 @@ const GameCanvas = ({
     setGameState,
     onGameEnd,
     isMultiplayer,
+    isHost,
     gameSettings,
     channel,
     playerId
+    
   });
 
   // ... (rest of the component remains the same)
