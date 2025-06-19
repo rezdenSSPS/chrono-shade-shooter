@@ -14,6 +14,7 @@ export interface Enemy {
   darkness: number;
   hp: number;
   isBoss: boolean;
+  speed: number;
 }
 
 export interface Bullet {

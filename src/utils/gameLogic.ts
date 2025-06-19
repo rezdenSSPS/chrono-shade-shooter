@@ -1,93 +1,110 @@
-
 import { GameData, GameState } from '@/types/game';
 
 export const updatePlayer = (gameData: GameData, canvas: HTMLCanvasElement) => {
-  const speed = 8;
-  if (gameData.keys['w']) gameData.player.y = Math.max(gameData.player.size, gameData.player.y - speed);
-  if (gameData.keys['s']) gameData.player.y = Math.min(canvas.height - gameData.player.size, gameData.player.y + speed);
-  if (gameData.keys['a']) gameData.player.x = Math.max(gameData.player.size, gameData.player.x - speed);
-  if (gameData.keys['d']) gameData.player.x = Math.min(canvas.width - gameData.player.size, gameData.player.x + speed);
+  const speed = 5;
+  const { keys, player } = gameData;
+  
+  if (keys['w'] || keys['arrowup']) player.y -= speed;
+  if (keys['s'] || keys['arrowdown']) player.y += speed;
+  if (keys['a'] || keys['arrowleft']) player.x -= speed;
+  if (keys['d'] || keys['arrowright']) player.x += speed;
+  
+  // Keep player within bounds
+  player.x = Math.max(player.size, Math.min(canvas.width - player.size, player.x));
+  player.y = Math.max(player.size, Math.min(canvas.height - player.size, player.y));
 };
 
 export const updateBullets = (gameData: GameData, canvas: HTMLCanvasElement) => {
   gameData.bullets = gameData.bullets.filter(bullet => {
     bullet.x += bullet.vx;
     bullet.y += bullet.vy;
-    return bullet.x > -20 && bullet.x < canvas.width + 20 && bullet.y > -20 && bullet.y < canvas.height + 20;
+    
+    return bullet.x > 0 && bullet.x < canvas.width && 
+           bullet.y > 0 && bullet.y < canvas.height;
   });
 };
 
 export const updateEnemies = (gameData: GameData) => {
-  gameData.enemies.forEach((enemy, index) => {
-    const dx = gameData.player.x - enemy.x;
-    const dy = gameData.player.y - enemy.y;
+  const player = gameData.player;
+  
+  gameData.enemies.forEach(enemy => {
+    const dx = player.x - enemy.x;
+    const dy = player.y - enemy.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
     
-    let speed = enemy.isBoss ? 1.5 : 0.8;
-    
-    // Only chase if close enough (unless boss)
-    if (enemy.isBoss || distance < 150) {
-      if (distance > 0) {
-        enemy.vx = (dx / distance) * speed;
-        enemy.vy = (dy / distance) * speed;
-      }
+    if (enemy.isBoss || distance < 200) {
+      // Chase player if boss or player is close
+      const speed = enemy.speed || 1;
+      enemy.vx = (dx / distance) * speed;
+      enemy.vy = (dy / distance) * speed;
     } else {
-      // Random movement when not chasing
-      enemy.vx += (Math.random() - 0.5) * 0.2;
-      enemy.vy += (Math.random() - 0.5) * 0.2;
-      enemy.vx = Math.max(-speed, Math.min(speed, enemy.vx));
-      enemy.vy = Math.max(-speed, Math.min(speed, enemy.vy));
+      // Random movement when player is far
+      if (Math.random() < 0.02) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = (enemy.speed || 1) * 0.5;
+        enemy.vx = Math.cos(angle) * speed;
+        enemy.vy = Math.sin(angle) * speed;
+      }
     }
     
     enemy.x += enemy.vx;
     enemy.y += enemy.vy;
-
-    // Enemy collision with other enemies
-    gameData.enemies.forEach((otherEnemy, otherIndex) => {
-      if (index !== otherIndex) {
-        const dx2 = enemy.x - otherEnemy.x;
-        const dy2 = enemy.y - otherEnemy.y;
-        const dist = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-        
-        if (dist < enemy.size + otherEnemy.size && dist > 0) {
-          const pushForce = 2;
-          enemy.x += (dx2 / dist) * pushForce;
-          enemy.y += (dy2 / dist) * pushForce;
-        }
-      }
-    });
   });
+
+  // Enemy-to-enemy collisions
+  for (let i = 0; i < gameData.enemies.length; i++) {
+    for (let j = i + 1; j < gameData.enemies.length; j++) {
+      const enemy1 = gameData.enemies[i];
+      const enemy2 = gameData.enemies[j];
+      
+      const dx = enemy2.x - enemy1.x;
+      const dy = enemy2.y - enemy1.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      const minDistance = (enemy1.size + enemy2.size) / 2;
+      
+      if (distance < minDistance && distance > 0) {
+        // Bounce enemies apart
+        const pushForce = 2;
+        const pushX = (dx / distance) * pushForce;
+        const pushY = (dy / distance) * pushForce;
+        
+        enemy1.vx -= pushX;
+        enemy1.vy -= pushY;
+        enemy2.vx += pushX;
+        enemy2.vy += pushY;
+      }
+    }
+  }
 };
 
 export const checkBulletEnemyCollisions = (
   gameData: GameData,
   setGameState: React.Dispatch<React.SetStateAction<GameState>>
 ) => {
-  gameData.bullets = gameData.bullets.filter(bullet => {
-    let hit = false;
-    gameData.enemies = gameData.enemies.filter(enemy => {
+  gameData.bullets.forEach((bullet, bulletIndex) => {
+    gameData.enemies.forEach((enemy, enemyIndex) => {
       const dx = bullet.x - enemy.x;
       const dy = bullet.y - enemy.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
       
-      if (distance < bullet.size + enemy.size) {
+      if (distance < bullet.size + enemy.size / 2) {
+        // Hit detected
         enemy.hp--;
-        hit = true;
+        gameData.bullets.splice(bulletIndex, 1);
         
         if (enemy.hp <= 0) {
-          const timeReward = enemy.isBoss ? 45 : Math.floor(enemy.darkness * 15) + 2;
-          setGameState(prev => ({ 
-            ...prev, 
-            timeLeft: prev.timeLeft + timeReward,
+          // Enemy defeated
+          const timeBonus = Math.floor(enemy.darkness * 10) + (enemy.isBoss ? 30 : 5);
+          setGameState(prev => ({
+            ...prev,
+            timeLeft: prev.timeLeft + timeBonus,
             enemiesKilled: prev.enemiesKilled + 1,
             bossActive: enemy.isBoss ? false : prev.bossActive
           }));
-          return false;
+          gameData.enemies.splice(enemyIndex, 1);
         }
       }
-      return true;
     });
-    return !hit;
   });
 };
 
@@ -95,15 +112,17 @@ export const checkPlayerEnemyCollisions = (
   gameData: GameData,
   setGameState: React.Dispatch<React.SetStateAction<GameState>>
 ) => {
-  for (const enemy of gameData.enemies) {
-    const dx = gameData.player.x - enemy.x;
-    const dy = gameData.player.y - enemy.y;
+  const player = gameData.player;
+  
+  gameData.enemies.forEach(enemy => {
+    const dx = player.x - enemy.x;
+    const dy = player.y - enemy.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
     
-    if (distance < gameData.player.size + enemy.size) {
-      setGameState(prev => ({ ...prev, timeLeft: Math.max(0, prev.timeLeft - 8) }));
-      gameData.enemies = gameData.enemies.filter(e => e !== enemy);
-      break;
+    if (distance < player.size + enemy.size / 2) {
+      // Player hit - end game
+      const survivalTime = Math.floor((Date.now() - gameData.gameStartTime) / 1000);
+      setGameState(prev => ({ ...prev, timeLeft: 0 }));
     }
-  }
+  });
 };

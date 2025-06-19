@@ -1,10 +1,18 @@
 
 import { GameData, GameState } from '@/types/game';
 
+interface GameSettings {
+  enemyCount: number;
+  enemySpeed: number;
+  enemyDamage: number;
+  gameMode?: 'survival' | 'team-vs-enemies' | 'team-vs-team';
+}
+
 export const spawnEnemy = (
   gameData: GameData,
   canvas: HTMLCanvasElement,
-  setGameState: React.Dispatch<React.SetStateAction<GameState>>
+  setGameState: React.Dispatch<React.SetStateAction<GameState>>,
+  gameSettings?: GameSettings
 ) => {
   const now = Date.now();
   const timeSinceStart = (now - gameData.gameStartTime) / 1000;
@@ -13,10 +21,11 @@ export const spawnEnemy = (
   // Update wave
   setGameState(prev => ({ ...prev, wave }));
   
-  // Wave-based spawn rate
+  // Wave-based spawn rate with game settings
   const baseSpawnRate = 800;
   const waveMultiplier = Math.max(0.3, 1 - (wave - 1) * 0.1);
-  const spawnRate = baseSpawnRate * waveMultiplier;
+  const settingsMultiplier = gameSettings ? (1 / gameSettings.enemyCount) : 1;
+  const spawnRate = baseSpawnRate * waveMultiplier * settingsMultiplier;
   
   if (now - gameData.lastEnemySpawn < spawnRate) return;
 
@@ -32,15 +41,18 @@ export const spawnEnemy = (
   }
 
   const darkness = Math.random();
+  const baseSpeed = gameSettings?.enemySpeed || 1;
+  
   gameData.enemies.push({
     x,
     y,
-    size: 30,
+    size: 40, // Bigger enemies
     vx: 0,
     vy: 0,
     darkness,
     hp: Math.floor(darkness * 2) + 1,
-    isBoss: false
+    isBoss: false,
+    speed: baseSpeed * 0.8 // Slower enemies
   });
 
   gameData.lastEnemySpawn = now;
@@ -63,7 +75,8 @@ export const spawnBoss = (
       vy: 1.2,
       darkness: 1,
       hp: 20,
-      isBoss: true
+      isBoss: true,
+      speed: 1
     });
 
     setGameState(prev => ({ ...prev, bossActive: true }));

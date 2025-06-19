@@ -16,8 +16,10 @@ const useGameLoop = (
   lobbyCode?: string,
   gameSettings?: {
     enemyCount: number;
-    enem
-  } = undefined
+    enemySpeed: number;
+    enemyDamage: number;
+    gameMode?: 'survival' | 'team-vs-enemies' | 'team-vs-team';
+  }
 ) => {
   const gameDataRef = useRef<GameData>({
     player: { x: window.innerWidth / 2, y: window.innerHeight / 2, size: 20 },
@@ -65,8 +67,12 @@ const useGameLoop = (
     };
 
     const handleMouseMove = (e: MouseEvent) => {
-      gameDataRef.current.mouse.x = e.clientX;
-      gameDataRef.current.mouse.y = e.clientY;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      gameDataRef.current.mouse.x = e.clientX - rect.left;
+      gameDataRef.current.mouse.y = e.clientY - rect.top;
     };
 
     const handleMouseClick = () => {
@@ -101,7 +107,7 @@ const useGameLoop = (
       updateEnemies(gameData);
       checkBulletEnemyCollisions(gameData, setGameState);
       checkPlayerEnemyCollisions(gameData, setGameState);
-      spawnEnemy(gameData, canvas, setGameState);
+      spawnEnemy(gameData, canvas, setGameState, gameSettings);
       spawnBoss(gameData, canvas, setGameState);
 
       // Update timer
@@ -150,7 +156,7 @@ const useGameLoop = (
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [gameState.gunLevel, gameState.fireRateLevel, gameState.bulletSizeLevel, onGameEnd, setGameState, gameState.gameStartTime, isMultiplayer, lobbyCode]);
+  }, [gameState.gunLevel, gameState.fireRateLevel, gameState.bulletSizeLevel, onGameEnd, setGameState, gameState.gameStartTime, isMultiplayer, lobbyCode, gameSettings]);
 
   return null;
 };
