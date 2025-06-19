@@ -2,7 +2,6 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 
 export type GameScreen = 'menu' | 'playing' | 'gameOver' | 'leaderboard' | 'multiplayerLobby' | 'multiplayerGame';
 
-// SETTINGS: What the host can configure in the lobby
 export interface GameSettings {
   enemyCount: number;
   enemySpeed: number;
@@ -11,7 +10,6 @@ export interface GameSettings {
   gameMode: 'survival' | 'team-vs-enemies' | 'team-vs-team';
 }
 
-// UI STATE: What the player sees on their screen (timer, levels, etc.)
 export interface GameUIState {
   timeLeft: number;
   gunLevel: number;
@@ -24,8 +22,6 @@ export interface GameUIState {
   gameMode: GameSettings['gameMode'];
   teamScores: { red: number; blue: number };
 }
-
-// ENTITIES: The actual objects in the game world
 
 export interface Player {
     id: string;
@@ -45,12 +41,11 @@ export interface Enemy {
     x: number;
     y: number;
     size: number;
-    speed: number;
     health: number;
     maxHealth: number;
+    speed: number;
     isBoss: boolean;
-    darkness: number;
-    isAlive: boolean;
+    color: string;
 }
 
 export interface Bullet {
@@ -58,15 +53,13 @@ export interface Bullet {
     x: number;
     y: number;
     size: number;
-    damage: number;
+    speed: number;
+    angle: number;
     playerId: string;
     team?: 'red' | 'blue';
-    color: string;
-    vx: number;
-    vy: number;
+    damage: number;
 }
 
-// GAME DATA: The complete state of the simulation for one client
 export interface GameData {
     player: Player;
     otherPlayers: Player[];
