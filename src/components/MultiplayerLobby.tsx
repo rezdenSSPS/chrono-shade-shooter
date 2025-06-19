@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { supabase } from '@/integrations/supabase/client';
@@ -7,6 +6,7 @@ interface GameSettings {
   enemyCount: number;
   enemySpeed: number;
   enemyDamage: number;
+  gameMode: 'survival' | 'team-vs-enemies' | 'team-vs-team';
 }
 
 interface MultiplayerLobbyProps {
@@ -21,7 +21,8 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
   const [gameSettings, setGameSettings] = useState<GameSettings>({
     enemyCount: 5,
     enemySpeed: 1,
-    enemyDamage: 1
+    enemyDamage: 1,
+    gameMode: 'survival'
   });
 
   const createLobby = async () => {
@@ -130,12 +131,25 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
                 <h3 className="text-xl font-bold text-purple-400">⚙️ Game Settings</h3>
                 
                 <div className="space-y-3">
+                  <div className="space-y-2">
+                    <span className="text-cyan-400 font-bold">Game Mode:</span>
+                    <select
+                      value={gameSettings.gameMode}
+                      onChange={(e) => setGameSettings(prev => ({ ...prev, gameMode: e.target.value as GameSettings['gameMode'] }))}
+                      className="w-full bg-gray-800 border-2 border-gray-600 text-white px-3 py-2 rounded-lg"
+                    >
+                      <option value="survival">🏆 Last Man Standing</option>
+                      <option value="team-vs-enemies">🤝 Team vs Enemies</option>
+                      <option value="team-vs-team">⚔️ Team vs Team</option>
+                    </select>
+                  </div>
+                  
                   <div className="flex justify-between items-center">
                     <span>Enemy Count:</span>
                     <input
                       type="range"
                       min="3"
-                      max="15"
+                      max="20"
                       value={gameSettings.enemyCount}
                       onChange={(e) => setGameSettings(prev => ({ ...prev, enemyCount: parseInt(e.target.value) }))}
                       className="w-24"

@@ -13,10 +13,14 @@ const useGameLoop = (
   setGameState: React.Dispatch<React.SetStateAction<GameState>>,
   onGameEnd: (score: number) => void,
   isMultiplayer: boolean = false,
-  lobbyCode?: string
+  lobbyCode?: string,
+  gameSettings?: {
+    enemyCount: number;
+    enem
+  } = undefined
 ) => {
   const gameDataRef = useRef<GameData>({
-    player: { x: 640, y: 360, size: 20 },
+    player: { x: window.innerWidth / 2, y: window.innerHeight / 2, size: 20 },
     enemies: [],
     bullets: [],
     keys: {},
@@ -35,6 +39,8 @@ const useGameLoop = (
     if (!canvas) return;
 
     gameDataRef.current.gameStartTime = gameState.gameStartTime;
+    gameDataRef.current.player.x = window.innerWidth / 2;
+    gameDataRef.current.player.y = window.innerHeight / 2;
 
     // Setup multiplayer if needed
     if (isMultiplayer && lobbyCode) {
@@ -59,20 +65,30 @@ const useGameLoop = (
     };
 
     const handleMouseMove = (e: MouseEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      gameDataRef.current.mouse.x = e.clientX - rect.left;
-      gameDataRef.current.mouse.y = e.clientY - rect.top;
+      gameDataRef.current.mouse.x = e.clientX;
+      gameDataRef.current.mouse.y = e.clientY;
     };
 
     const handleMouseClick = () => {
       shoot(gameDataRef.current, gameState);
     };
 
+    const handleResize = () => {
+      if (canvas) {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+      }
+    };
+
     // Add event listeners
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
-    canvas.addEventListener('mousemove', handleMouseMove);
-    canvas.addEventListener('click', handleMouseClick);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('click', handleMouseClick);
+    window.addEventListener('resize', handleResize);
+
+    // Initial resize
+    handleResize();
 
     const updateGame = () => {
       const canvas = canvasRef.current;
@@ -123,8 +139,9 @@ const useGameLoop = (
       // Cleanup
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
-      canvas.removeEventListener('mousemove', handleMouseMove);
-      canvas.removeEventListener('click', handleMouseClick);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('click', handleMouseClick);
+      window.removeEventListener('resize', handleResize);
       
       if (gameDataRef.current.multiplayerChannel) {
         supabase.removeChannel(gameDataRef.current.multiplayerChannel);

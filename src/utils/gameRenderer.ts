@@ -49,6 +49,10 @@ export const renderGame = (
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
+  // Set canvas size to full screen
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+
   // Enhanced background
   const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
   gradient.addColorStop(0, '#0f0f23');

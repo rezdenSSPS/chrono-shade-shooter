@@ -12,6 +12,7 @@ interface GameSettings {
   enemyCount: number;
   enemySpeed: number;
   enemyDamage: number;
+  gameMode: 'survival' | 'team-vs-enemies' | 'team-vs-team';
 }
 
 const Game = () => {
@@ -21,7 +22,8 @@ const Game = () => {
   const [gameSettings, setGameSettings] = useState<GameSettings>({
     enemyCount: 1,
     enemySpeed: 1,
-    enemyDamage: 1
+    enemyDamage: 1,
+    gameMode: 'survival'
   });
 
   const startGame = () => setGameState('playing');
@@ -66,6 +68,7 @@ const Game = () => {
           onGameEnd={endGame} 
           isMultiplayer={true}
           lobbyCode={lobbyCode}
+          gameSettings={gameSettings}
         />
       )}
       
