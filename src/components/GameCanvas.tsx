@@ -69,14 +69,25 @@ const GameCanvas = ({
             break;
       }
 
-      if (isMultiplayer && isHost && channel && gameState.timeLeft >= cost && currentLevel < 10) {
+      if (gameState.timeLeft < cost || currentLevel >= 10) return;
+
+      // In multiplayer, only the host can initiate an upgrade purchase.
+      // The host updates its own state and then broadcasts the change to all clients.
+      if (isMultiplayer && isHost && channel) {
+            // Host applies change locally for immediate feedback
+            setGameState(prev => ({
+                ...prev,
+                timeLeft: prev.timeLeft - cost,
+                [`${upgradeType}Level`]: prev[`${upgradeType}Level`] + 1
+            }));
+           // Host broadcasts the change for clients to apply
            channel.send({
                 type: 'broadcast',
                 event: 'purchase-upgrade',
                 payload: { upgradeType, cost }
             });
-      } else if (!isMultiplayer && gameState.timeLeft >= cost && currentLevel < 10) {
-           // Single player logic
+      } else if (!isMultiplayer) {
+           // Single player logic remains the same
             setGameState(prev => ({
                 ...prev,
                 timeLeft: prev.timeLeft - cost,
@@ -91,17 +102,17 @@ const GameCanvas = ({
 
   const getGunUpgradeCost = () => {
     const costs = [0, 15, 25, 40, 60, 85, 115, 150, 190, 235, 285];
-    return costs[gameState.gunLevel] || 300;
+    return costs[gameState.gunLevel] || 9999;
   };
 
   const getFireRateUpgradeCost = () => {
     const costs = [0, 10, 18, 28, 42, 60, 82, 108, 138, 172, 210];
-    return costs[gameState.fireRateLevel] || 250;
+    return costs[gameState.fireRateLevel] || 9999;
   };
 
   const getBulletSizeUpgradeCost = () => {
     const costs = [0, 20, 35, 55, 80, 110, 145, 185, 230, 280, 335];
-    return costs[gameState.bulletSizeLevel] || 375;
+    return costs[gameState.bulletSizeLevel] || 9999;
   };
 
   const getGunUpgradeText = () => {
@@ -183,7 +194,7 @@ const GameCanvas = ({
       )}
 
       {/* Fullscreen Canvas */}
-      <canvas ref={canvasRef} className="flex-1 w-full h-full bg-gray-900" style={{ cursor: 'none' }} />
+      <canvas ref={canvasRef} className="flex-1 w-full h-full bg-gray-900" style={{ cursor: 'crosshair' }} />
       {/* ... bottom controls ... */}
     </div>
   );
