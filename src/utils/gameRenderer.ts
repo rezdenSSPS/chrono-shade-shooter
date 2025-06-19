@@ -10,9 +10,10 @@ function drawHumanSilhouette(
   const { isBoss, darkness } = entity as Enemy;
 
   if (!isAlive) {
-    ctx.globalAlpha = 0.5;
+    ctx.globalAlpha = 0.4;
   }
 
+  // Determine color based on type and team
   if (isMainPlayer) {
       ctx.fillStyle = '#00ff00';
   } else if (team) { // It's another player
@@ -36,36 +37,26 @@ function drawHumanSilhouette(
   const scale = size / 25;
   ctx.beginPath();
   ctx.arc(x, y - 12 * scale, 6 * scale, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
+  ctx.fill(); ctx.stroke();
   ctx.beginPath();
   ctx.rect(x - 4 * scale, y - 6 * scale, 8 * scale, 15 * scale);
-  ctx.fill();
-  ctx.stroke();
+  ctx.fill(); ctx.stroke();
   ctx.beginPath();
   ctx.rect(x - 12 * scale, y - 3 * scale, 6 * scale, 12 * scale);
   ctx.rect(x + 6 * scale, y - 3 * scale, 6 * scale, 12 * scale);
-  ctx.fill();
-  ctx.stroke();
+  ctx.fill(); ctx.stroke();
   ctx.beginPath();
   ctx.rect(x - 4 * scale, y + 9 * scale, 6 * scale, 12 * scale);
   ctx.rect(x - 2 * scale, y + 9 * scale, 6 * scale, 12 * scale);
-  ctx.fill();
-  ctx.stroke();
+  ctx.fill(); ctx.stroke();
   
-  if (!isAlive) {
-    ctx.globalAlpha = 1.0;
-  }
+  ctx.globalAlpha = 1.0;
 
   if (isBoss) {
-      ctx.shadowColor = '#ff0000';
-      ctx.shadowBlur = 25;
-      ctx.strokeStyle = '#ff0000';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.arc(x, y, size + 8, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
+      ctx.shadowColor = '#ff0000'; ctx.shadowBlur = 25;
+      ctx.strokeStyle = '#ff0000'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(x, y, size + 8, 0, Math.PI * 2);
+      ctx.stroke(); ctx.shadowBlur = 0;
   }
 
   if (isAlive && health !== undefined && maxHealth !== undefined && health < maxHealth) {
@@ -85,27 +76,19 @@ function drawHumanSilhouette(
 }
 
 function drawCrosshair(ctx: CanvasRenderingContext2D, mouse: {x: number, y: number}) {
-    ctx.strokeStyle = '#00ffff';
-    ctx.lineWidth = 3;
-    ctx.shadowColor = '#00ffff';
-    ctx.shadowBlur = 8;
+    ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 3;
+    ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 8;
     ctx.beginPath();
-    ctx.moveTo(mouse.x - 20, mouse.y);
-    ctx.lineTo(mouse.x + 20, mouse.y);
-    ctx.moveTo(mouse.x, mouse.y - 20);
-    ctx.lineTo(mouse.x, mouse.y + 20);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
+    ctx.moveTo(mouse.x - 20, mouse.y); ctx.lineTo(mouse.x + 20, mouse.y);
+    ctx.moveTo(mouse.x, mouse.y - 20); ctx.lineTo(mouse.x, mouse.y + 20);
+    ctx.stroke(); ctx.shadowBlur = 0;
 }
 
 function drawBullet(ctx: CanvasRenderingContext2D, bullet: Bullet) {
-    ctx.fillStyle = bullet.color;
-    ctx.shadowColor = bullet.color;
-    ctx.shadowBlur = 15;
-    ctx.beginPath();
+    ctx.fillStyle = bullet.color; ctx.shadowColor = bullet.color;
+    ctx.shadowBlur = 15; ctx.beginPath();
     ctx.arc(bullet.x, bullet.y, bullet.size, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
+    ctx.fill(); ctx.shadowBlur = 0;
 }
 
 export function renderGame(canvas: HTMLCanvasElement, gameData: GameData) {
@@ -125,21 +108,12 @@ export function renderGame(canvas: HTMLCanvasElement, gameData: GameData) {
       ctx.fillStyle = '#ffffff';
       ctx.font = '12px Arial';
       ctx.textAlign = 'center';
-      ctx.fillText(player.id.substring(0, 8), player.x, player.y - player.size - 25);
+      ctx.fillText(player.id.substring(7, 12), player.x, player.y - player.size - 25);
     }
   });
 
-  gameData.enemies.forEach(enemy => {
-    drawHumanSilhouette(ctx, enemy);
-  });
-
-  gameData.bullets.forEach(bullet => {
-    drawBullet(ctx, bullet);
-  });
-  
+  gameData.enemies.forEach(enemy => drawHumanSilhouette(ctx, enemy));
+  gameData.bullets.forEach(bullet => drawBullet(ctx, bullet));
   drawHumanSilhouette(ctx, gameData.player, true);
-
-  if (gameData.player.isAlive) {
-    drawCrosshair(ctx, gameData.mouse);
-  }
+  if (gameData.player.isAlive) drawCrosshair(ctx, gameData.mouse);
 }
