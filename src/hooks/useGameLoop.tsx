@@ -1,4 +1,4 @@
-// src/hooks/useGameLoop.tsx (FINAL, High-Speed Version)
+// src/hooks/useGameLoop.tsx (FINAL, with Synced Timer)
 
 import { useEffect, useRef, useCallback } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
@@ -22,6 +22,7 @@ interface UseGameLoopProps {
   setGameState: React.Dispatch<React.SetStateAction<GameUIState>>;
   onGameEnd: (score: number) => void;
   isMultiplayer?: boolean;
+  isHost?: boolean;
   gameSettings: GameSettings;
   channel?: RealtimeChannel;
   playerId?: string;
@@ -33,6 +34,7 @@ const useGameLoop = ({
   setGameState,
   onGameEnd,
   isMultiplayer = false,
+  isHost = false,
   gameSettings,
   channel,
   playerId,
@@ -62,6 +64,7 @@ const useGameLoop = ({
   const animationFrameId = useRef<number>();
   const lastUpdateTime = useRef(Date.now());
   const lastPositionBroadcast = useRef(0);
+  const lastTimeBroadcast = useRef(0);
 
   // Effect to set up and tear down multiplayer listeners
   useEffect(() => {
@@ -87,7 +90,7 @@ const useGameLoop = ({
       }
     };
 
-    // --- Broadcast listener for PLAYER MOVEMENT (The new, fast part) ---
+    // --- Broadcast listener for PLAYER MOVEMENT ---
     const handlePlayerMove = (payload: { payload: { id: string, x: number, y: number } }) => {
         if (payload.payload.id !== playerId) {
             const movedPlayer = gameDataRef.current.otherPlayers.find(p => p.id === payload.payload.id);
@@ -98,9 +101,18 @@ const useGameLoop = ({
         }
     };
 
+    // --- Broadcast listener for TIME SYNC ---
+    const handleTimeUpdate = (payload: { payload: { timeLeft: number }}) => {
+      // Only non-hosts should listen and sync their time to the host
+      if (!isHost) {
+        setGameState(prev => ({ ...prev, timeLeft: payload.payload.timeLeft }));
+      }
+    };
+
     channel.on('presence', { event: 'sync' }, handlePresenceSync);
     channel.on('broadcast', { event: 'bullet-fired' }, handleBulletFired);
-    channel.on('broadcast', { event: 'player-move' }, handlePlayerMove); // <-- ADD LISTENER
+    channel.on('broadcast', { event: 'player-move' }, handlePlayerMove);
+    channel.on('broadcast', { event: 'time-update' }, handleTimeUpdate);
     
     // Announce presence once on join
     channel.track({
@@ -112,13 +124,13 @@ const useGameLoop = ({
     return () => {
         channel.off('presence', { event: 'sync' }, handlePresenceSync);
         channel.off('broadcast', { event: 'bullet-fired' }, handleBulletFired);
-        channel.off('broadcast', { event: 'player-move' }, handlePlayerMove); // <-- CLEAN UP LISTENER
+        channel.off('broadcast', { event: 'player-move' }, handlePlayerMove);
+        channel.off('broadcast', { event: 'time-update' }, handleTimeUpdate);
     };
-  }, [isMultiplayer, channel, playerId]);
+  }, [isMultiplayer, channel, playerId, isHost, setGameState]);
   
   // Input handler effect (no changes needed here)
   useEffect(() => {
-    // ... same as before
     const handleKeyDown = (e: KeyboardEvent) => { gameDataRef.current.keys[e.key.toLowerCase()] = true; };
     const handleKeyUp = (e: KeyboardEvent) => { gameDataRef.current.keys[e.key.toLowerCase()] = false; };
     const handleMouseMove = (e: MouseEvent) => {
@@ -161,7 +173,33 @@ const useGameLoop = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // --- UPDATE ---
+    // --- UPDATE TIMER (Authoritative Logic) ---
+    if (!isMultiplayer || isHost) {
+      const newTimeLeft = gameState.timeLeft - deltaTime;
+
+      if (newTimeLeft <= 0) {
+        onGameEnd(gameDataRef.current.player.kills);
+        if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
+        return; // Stop the loop immediately
+      }
+
+      setGameState(prev => ({ ...prev, timeLeft: newTimeLeft }));
+
+      // If host, broadcast the time periodically
+      if (isMultiplayer && channel) {
+        const timeBroadcastInterval = 1000; // 1 second
+        if (now - lastTimeBroadcast.current > timeBroadcastInterval) {
+          lastTimeBroadcast.current = now;
+          channel.send({
+            type: 'broadcast',
+            event: 'time-update',
+            payload: { timeLeft: newTimeLeft }
+          });
+        }
+      }
+    }
+
+    // --- UPDATE GAME STATE ---
     updatePlayer(gameDataRef.current, canvas);
     updateBullets(gameDataRef.current, canvas);
     updateEnemies(gameDataRef.current);
@@ -175,10 +213,10 @@ const useGameLoop = ({
       spawnBoss(gameDataRef.current, canvas, setGameState);
     }
     
-    // --- MULTIPLAYER SEND LOGIC (The crucial change) ---
+    // --- MULTIPLAYER SEND LOGIC ---
     if (isMultiplayer && channel && playerId) {
-        // Broadcast position updates at a high frequency (e.g., 20 times per second)
-        const broadcastInterval = 16; // ms, 1000/50 = 20hz
+        // Broadcast position updates at a high frequency
+        const broadcastInterval = 16; // ms, ~60hz
         if (now - lastPositionBroadcast.current > broadcastInterval) {
             lastPositionBroadcast.current = now;
             channel.send({
@@ -197,11 +235,10 @@ const useGameLoop = ({
     renderGame(canvas, gameDataRef.current);
 
     animationFrameId.current = requestAnimationFrame(gameLoop);
-  }, [gameSettings, isMultiplayer, setGameState, channel, playerId, canvasRef, gameState, onGameEnd]);
+  }, [gameSettings, isMultiplayer, setGameState, channel, playerId, canvasRef, gameState, onGameEnd, isHost]);
 
-  // Start/Stop effect (no changes needed here)
+  // Start/Stop effect
   useEffect(() => {
-    // ... same as before
     gameDataRef.current.player.team = gameSettings.gameMode === 'team-vs-team' ? (Math.random() < 0.5 ? 'red' : 'blue') : 'blue';
     gameDataRef.current.player.id = playerId || 'solo-player';
     lastUpdateTime.current = Date.now();
