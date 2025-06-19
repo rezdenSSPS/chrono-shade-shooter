@@ -1,4 +1,3 @@
-
 import { useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { GameData, GameState } from '@/types/game';
@@ -35,6 +34,7 @@ const useGameLoop = (
   });
 
   const animationRef = useRef<number>();
+  const channelRef = useRef<any>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -45,15 +45,39 @@ const useGameLoop = (
     gameDataRef.current.player.y = window.innerHeight / 2;
 
     // Setup multiplayer if needed
-    if (isMultiplayer && lobbyCode) {
-      const channel = supabase.channel(`game-lobby-${lobbyCode}`)
+    if (isMultiplayer && lobbyCode && !channelRef.current) {
+      const channelName = `game-lobby-${lobbyCode}`;
+      
+      // Remove any existing channel first
+      if (gameDataRef.current.multiplayerChannel) {
+        supabase.removeChannel(gameDataRef.current.multiplayerChannel);
+        gameDataRef.current.multiplayerChannel = null;
+      }
+
+      // Create new channel
+      const channel = supabase.channel(channelName);
+      
+      // Configure the channel before subscribing
+      channel
         .on('presence', { event: 'sync' }, () => {
           // Handle player sync
+          console.log('Players synced');
         })
         .on('broadcast', { event: 'player-update' }, (payload) => {
           // Handle other players' positions
-        })
-        .subscribe();
+          console.log('Player update received:', payload);
+        });
+
+      // Subscribe to the channel
+      channel.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('Successfully subscribed to multiplayer channel');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('Failed to subscribe to multiplayer channel');
+        }
+      });
+
+      channelRef.current = channel;
       gameDataRef.current.multiplayerChannel = channel;
     }
 
@@ -120,16 +144,20 @@ const useGameLoop = (
         return { ...prev, timeLeft: newTime };
       });
 
-      // Broadcast position in multiplayer
-      if (isMultiplayer && gameDataRef.current.multiplayerChannel) {
-        gameDataRef.current.multiplayerChannel.send({
-          type: 'broadcast',
-          event: 'player-update',
-          payload: {
-            position: { x: gameData.player.x, y: gameData.player.y },
-            stats: gameState
-          }
-        });
+      // Broadcast position in multiplayer (throttled)
+      if (isMultiplayer && gameDataRef.current.multiplayerChannel && Math.random() < 0.1) {
+        try {
+          gameDataRef.current.multiplayerChannel.send({
+            type: 'broadcast',
+            event: 'player-update',
+            payload: {
+              position: { x: gameData.player.x, y: gameData.player.y },
+              stats: gameState
+            }
+          });
+        } catch (error) {
+          console.warn('Failed to broadcast player update:', error);
+        }
       }
     };
 
@@ -149,14 +177,22 @@ const useGameLoop = (
       window.removeEventListener('click', handleMouseClick);
       window.removeEventListener('resize', handleResize);
       
-      if (gameDataRef.current.multiplayerChannel) {
-        supabase.removeChannel(gameDataRef.current.multiplayerChannel);
-      }
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [gameState.gunLevel, gameState.fireRateLevel, gameState.bulletSizeLevel, onGameEnd, setGameState, gameState.gameStartTime, isMultiplayer, lobbyCode, gameSettings]);
+  }, [gameState.gunLevel, gameState.fireRateLevel, gameState.bulletSizeLevel, onGameEnd, setGameState, gameState.gameStartTime, gameSettings]);
+
+  // Separate effect for multiplayer cleanup
+  useEffect(() => {
+    return () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+        gameDataRef.current.multiplayerChannel = null;
+      }
+    };
+  }, [isMultiplayer, lobbyCode]);
 
   return null;
 };

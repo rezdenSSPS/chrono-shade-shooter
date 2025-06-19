@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -27,21 +26,46 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
     gameMode: 'survival'
   });
 
+  const channelRef = useRef<any>(null);
+
+  // Cleanup function
+  const cleanupChannel = () => {
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+  };
+
   const createLobby = async () => {
+    // Cleanup any existing channel
+    cleanupChannel();
+
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
     setLobbyCode(code);
     setIsHost(true);
     
-    const channel = supabase.channel(`game-lobby-${code}`)
+    const channelName = `game-lobby-${code}`;
+    const channel = supabase.channel(channelName);
+    
+    channel
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState();
         const players = Object.keys(state);
         setConnectedPlayers(players);
       })
-      .on('broadcast', { event: 'start-game' }, () => {
-        onStartGame(code, gameSettings);
-      })
-      .subscribe();
+      .on('broadcast', { event: 'start-game' }, (payload) => {
+        onStartGame(code, payload.settings || gameSettings);
+      });
+
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        console.log('Host subscribed to lobby');
+        // Track host presence
+        channel.track({ user_id: 'host', role: 'host' });
+      }
+    });
+
+    channelRef.current = channel;
   };
 
   const joinLobby = async () => {
@@ -50,30 +74,45 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
       return;
     }
     
+    // Cleanup any existing channel
+    cleanupChannel();
+
     const code = inputCode.toUpperCase();
     setLobbyCode(code);
     
-    const channel = supabase.channel(`game-lobby-${code}`)
+    const channelName = `game-lobby-${code}`;
+    const channel = supabase.channel(channelName);
+    
+    channel
       .on('presence', { event: 'sync' }, () => {
         const state = channel.presenceState();
         const players = Object.keys(state);
         setConnectedPlayers(players);
       })
       .on('broadcast', { event: 'start-game' }, (payload) => {
-        onStartGame(code, payload.settings);
-      })
-      .subscribe();
-      
-    await channel.track({ user_id: Math.random().toString() });
+        onStartGame(code, payload.settings || gameSettings);
+      });
+
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        console.log('Player joined lobby');
+        // Track player presence
+        const playerId = Math.random().toString();
+        channel.track({ user_id: playerId, role: 'player' });
+      }
+    });
+
+    channelRef.current = channel;
   };
 
   const startMultiplayerGame = () => {
-    const channel = supabase.channel(`game-lobby-${lobbyCode}`);
-    channel.send({
-      type: 'broadcast',
-      event: 'start-game',
-      payload: { settings: gameSettings }
-    });
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'start-game',
+        payload: { settings: gameSettings }
+      });
+    }
     onStartGame(lobbyCode, gameSettings);
   };
 
@@ -87,6 +126,13 @@ const MultiplayerLobby = ({ onStartGame, onBackToMenu }: MultiplayerLobbyProps) 
       joinLobby();
     }
   };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cleanupChannel();
+    };
+  }, []);
 
   return (
     <div className="text-center text-white bg-gradient-to-b from-purple-900 via-blue-900 to-indigo-900 min-h-screen flex flex-col justify-center items-center">
