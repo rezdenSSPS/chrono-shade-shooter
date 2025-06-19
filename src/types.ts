@@ -1,16 +1,17 @@
-// src/types.ts (Updated)
-
-import { RealtimeChannel } from "@supabase/supabase-js";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 export type GameScreen = 'menu' | 'playing' | 'gameOver' | 'leaderboard' | 'multiplayerLobby' | 'multiplayerGame';
 
+// SETTINGS: What the host can configure in the lobby
 export interface GameSettings {
   enemyCount: number;
   enemySpeed: number;
   enemyDamage: number;
+  bossEnabled: boolean; // Added for lobby settings
   gameMode: 'survival' | 'team-vs-enemies' | 'team-vs-team';
 }
 
+// UI STATE: What the player sees on their screen (timer, levels, etc.)
 export interface GameUIState {
   timeLeft: number;
   gunLevel: number;
@@ -23,6 +24,8 @@ export interface GameUIState {
   gameMode: GameSettings['gameMode'];
   teamScores: { red: number; blue: number };
 }
+
+// ENTITIES: The actual objects in the game world
 
 export interface Player {
     id: string;
@@ -38,19 +41,19 @@ export interface Player {
 }
 
 export interface Enemy {
+    id: string; // Added for multiplayer tracking
     x: number;
     y: number;
     size: number;
-    speed: number;
+    speed: number; // Added for movement logic
     health: number;
     maxHealth: number;
     isBoss: boolean;
-    darkness: number;
-    vx: number; // <-- For physics-based movement
-    vy: number; // <-- For physics-based movement
+    color: string; // Changed from darkness for clarity
 }
 
 export interface Bullet {
+    id: string; // Added for multiplayer tracking
     x: number;
     y: number;
     size: number;
@@ -58,20 +61,21 @@ export interface Bullet {
     playerId: string;
     team?: 'red' | 'blue';
     color: string;
-    vx: number; // <-- Use velocity instead of angle/speed
-    vy: number; // <-- Use velocity instead of angle/speed
+    vx: number; // Use velocity instead of angle/speed
+    vy: number; // Use velocity instead of angle/speed
 }
 
+// GAME DATA: The complete state of the simulation
 export interface GameData {
     player: Player;
     otherPlayers: Player[];
     enemies: Enemy[];
     bullets: Bullet[];
-    keys: { [key: string]: boolean };
+    keys: { [key:string]: boolean };
     mouse: { x: number; y: number };
     lastShot: number;
     lastEnemySpawn: number;
     lastBossSpawn: number;
     gameMode: GameSettings['gameMode'];
-    gameStartTime: number; // <-- Make sure this is here
+    gameStartTime: number;
 }
