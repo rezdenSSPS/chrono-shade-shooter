@@ -178,7 +178,7 @@ const useGameLoop = ({
     // --- MULTIPLAYER SEND LOGIC (The crucial change) ---
     if (isMultiplayer && channel && playerId) {
         // Broadcast position updates at a high frequency (e.g., 20 times per second)
-        const broadcastInterval = 50; // ms, 1000/50 = 20hz
+        const broadcastInterval = 16; // ms, 1000/50 = 20hz
         if (now - lastPositionBroadcast.current > broadcastInterval) {
             lastPositionBroadcast.current = now;
             channel.send({
