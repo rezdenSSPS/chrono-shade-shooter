@@ -23,7 +23,7 @@ const Game = () => {
   });
 
   const channelRef = useRef<RealtimeChannel | null>(null);
-  const playerIdRef = useRef<string>(`player_${Math.random().toString(36).substring(2, 9)}`);
+  const playerIdRef = useRef<string>(Math.random().toString(36).substring(2, 10));
 
   const cleanupChannel = useCallback(() => {
     if (channelRef.current) {
@@ -44,7 +44,7 @@ const Game = () => {
   const setupChannel = (code: string) => {
     cleanupChannel();
     const channelName = `game-lobby-${code}`;
-    const channel = supabase.channel(channelName, { config: { presence: { key: playerIdRef.current } } });
+    const channel = supabase.channel(channelName);
 
     channel
       .on('presence', { event: 'sync' }, () => {
@@ -52,15 +52,20 @@ const Game = () => {
         const players = Object.values(presenceState)
           .flatMap((presences: any) => presences)
           .map((p: any): Player => ({
-            id: p.user_id, role: p.role, team: p.team,
+            id: p.user_id,
+            role: p.role,
+            team: p.team,
             x: 0, y: 0, size: 20, health: 100, maxHealth: 100, isAlive: true, kills: 0,
           }));
         setConnectedPlayers(players);
       })
       .on('broadcast', { event: 'start-game' }, (payload) => {
-        // Non-hosts start the game when they receive the broadcast
-        if (!isHost) {
-          handleStartGame(code, payload.payload.settings);
+        handleStartGame(code, payload.payload.settings);
+      })
+      .on('broadcast', { event: 'settings-update' }, (payload) => {
+        // Only non-hosts should update settings from broadcast
+        if(!isHost){
+            setGameSettings(payload.payload.settings);
         }
       });
 
@@ -71,31 +76,51 @@ const Game = () => {
   const createLobby = () => {
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
     const channel = setupChannel(code);
+    
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        channel.track({ user_id: playerIdRef.current, role: 'host' });
+      }
+    });
+
     setIsHost(true);
     setLobbyCode(code);
-    channel.subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') await channel.track({ user_id: playerIdRef.current, role: 'host' });
-    });
   };
 
   const joinLobby = (code: string) => {
     const channel = setupChannel(code);
+    
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        channel.track({ user_id: playerIdRef.current, role: 'player' });
+      }
+    });
+
     setIsHost(false);
     setLobbyCode(code);
-    channel.subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') await channel.track({ user_id: playerIdRef.current, role: 'player' });
-    });
+  };
+
+  const updateGameSettings = (newSettings: GameSettings) => {
+    setGameSettings(newSettings);
+    if (isHost && channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'settings-update',
+        payload: { settings: newSettings }
+      });
+    }
   };
 
   const startMultiplayerGame = () => {
     if (isHost && channelRef.current) {
-      // The host sends the start command to others
       channelRef.current.send({
-        type: 'broadcast', event: 'start-game', payload: { settings: gameSettings }
+        type: 'broadcast',
+        event: 'start-game',
+        payload: { settings: gameSettings }
       });
-      // The host also starts their own game
-      handleStartGame(lobbyCode, gameSettings);
     }
+    // Host also starts their own game
+    handleStartGame(lobbyCode, gameSettings);
   };
 
   const backToMenu = () => {
@@ -106,34 +131,67 @@ const Game = () => {
   const endGame = (score: number) => {
     setFinalScore(score);
     setGameScreen('gameOver');
-    cleanupChannel();
+    cleanupChannel(); // Clean up channel after game ends
   };
 
-  useEffect(() => { return () => cleanupChannel(); }, [cleanupChannel]);
+  useEffect(() => {
+    // Ensure cleanup is called on component unmount
+    return () => cleanupChannel();
+  }, [cleanupChannel]);
 
   return (
     <div className="min-h-screen bg-black flex items-center justify-center">
       {gameScreen === 'menu' && (
-        <MainMenu onStartGame={() => setGameScreen('playing')} onShowLeaderboard={() => setGameScreen('leaderboard')} onStartMultiplayer={() => setGameScreen('multiplayerLobby')} />
+        <MainMenu 
+          onStartGame={() => setGameScreen('playing')} 
+          onShowLeaderboard={() => setGameScreen('leaderboard')}
+          onStartMultiplayer={() => setGameScreen('multiplayerLobby')}
+        />
       )}
+      
       {gameScreen === 'playing' && (
         <GameCanvas onGameEnd={endGame} gameSettings={{ gameMode: 'survival', enemyCount: 10, enemySpeed: 1, enemyDamage: 1, bossEnabled: false }} />
       )}
+      
       {gameScreen === 'multiplayerLobby' && (
         <MultiplayerLobby 
-          lobbyCode={lobbyCode} isHost={isHost} connectedPlayers={connectedPlayers}
-          gameSettings={gameSettings} onCreateLobby={createLobby} onJoinLobby={joinLobby}
-          onUpdateSettings={() => {}} onStartGame={startMultiplayerGame} onBackToMenu={backToMenu}
+          lobbyCode={lobbyCode}
+          isHost={isHost}
+          connectedPlayers={connectedPlayers}
+          gameSettings={gameSettings}
+          onCreateLobby={createLobby}
+          onJoinLobby={joinLobby}
+          onUpdateSettings={updateGameSettings}
+          onStartGame={startMultiplayerGame}
+          onBackToMenu={backToMenu}
         />
       )}
+      
       {gameScreen === 'multiplayerGame' && channelRef.current && (
-        <GameCanvas onGameEnd={endGame} isMultiplayer={true} isHost={isHost} lobbyCode={lobbyCode} gameSettings={gameSettings} channel={channelRef.current} playerId={playerIdRef.current} />
+        <GameCanvas 
+          onGameEnd={endGame} 
+          isMultiplayer={true}
+          isHost={isHost}
+          lobbyCode={lobbyCode}
+          gameSettings={gameSettings}
+          channel={channelRef.current}
+          playerId={playerIdRef.current}
+        />
       )}
+      
       {gameScreen === 'gameOver' && (
-        <GameOverScreen score={finalScore} onBackToMenu={backToMenu} onShowLeaderboard={() => setGameScreen('leaderboard')} />
+        <GameOverScreen 
+          score={finalScore} 
+          onBackToMenu={backToMenu}
+          onShowLeaderboard={() => setGameScreen('leaderboard')}
+        />
       )}
-      {gameScreen === 'leaderboard' && ( <LeaderboardScreen onBackToMenu={backToMenu} /> )}
+      
+      {gameScreen === 'leaderboard' && (
+        <LeaderboardScreen onBackToMenu={backToMenu} />
+      )}
     </div>
   );
 };
+
 export default Game;
