@@ -1,13 +1,9 @@
-// src/hooks/useGameLoop.tsx (Corrected Version)
+// src/hooks/useGameLoop.tsx (FINAL, High-Speed Version)
 
 import { useEffect, useRef, useCallback } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import type { GameData, GameSettings, GameUIState, Player, Bullet } from '@/types';
-import { renderGame } from '@/utils/gameRenderer'; // Make sure this import is correct
-
-// --- THIS SECTION IS NOW CORRECT ---
-// We are importing the REAL functions from your gameLogic.ts file
-// The placeholder functions have been removed.
+import { renderGame } from '@/utils/gameRenderer';
 import {
   updatePlayer,
   updateBullets,
@@ -19,7 +15,6 @@ import {
   spawnBoss,
   shoot
 } from '@/utils/gameLogic';
-// --- END OF CORRECTED SECTION ---
 
 interface UseGameLoopProps {
   canvasRef: React.RefObject<HTMLCanvasElement>;
@@ -66,11 +61,13 @@ const useGameLoop = ({
   });
   const animationFrameId = useRef<number>();
   const lastUpdateTime = useRef(Date.now());
+  const lastPositionBroadcast = useRef(0);
 
   // Effect to set up and tear down multiplayer listeners
   useEffect(() => {
     if (!isMultiplayer || !channel || !playerId) return;
 
+    // --- Presence listener for players joining/leaving ---
     const handlePresenceSync = () => {
       const presenceState = channel.presenceState();
       const players = Object.values(presenceState)
@@ -78,46 +75,50 @@ const useGameLoop = ({
         .filter((p: any) => p.user_id !== playerId);
 
       gameDataRef.current.otherPlayers = players.map((p: any): Player => ({
-        id: p.user_id,
-        x: p.x,
-        y: p.y,
-        health: p.health,
-        maxHealth: 100,
-        isAlive: p.isAlive,
-        team: p.team,
-        role: p.role,
-        size: 20,
-        kills: p.kills || 0,
+        id: p.user_id, x: p.x, y: p.y, health: p.health, maxHealth: 100,
+        isAlive: p.isAlive, team: p.team, role: p.role, size: 20, kills: p.kills || 0,
       }));
     };
-
+    
+    // --- Broadcast listener for BULLETS ---
     const handleBulletFired = (payload: { payload: { bullet: Bullet } }) => {
       if (payload.payload.bullet.playerId !== playerId) {
         gameDataRef.current.bullets.push(payload.payload.bullet);
       }
     };
 
+    // --- Broadcast listener for PLAYER MOVEMENT (The new, fast part) ---
+    const handlePlayerMove = (payload: { payload: { id: string, x: number, y: number } }) => {
+        if (payload.payload.id !== playerId) {
+            const movedPlayer = gameDataRef.current.otherPlayers.find(p => p.id === payload.payload.id);
+            if (movedPlayer) {
+                movedPlayer.x = payload.payload.x;
+                movedPlayer.y = payload.payload.y;
+            }
+        }
+    };
+
     channel.on('presence', { event: 'sync' }, handlePresenceSync);
     channel.on('broadcast', { event: 'bullet-fired' }, handleBulletFired);
+    channel.on('broadcast', { event: 'player-move' }, handlePlayerMove); // <-- ADD LISTENER
     
+    // Announce presence once on join
     channel.track({
-        user_id: playerId,
-        x: gameDataRef.current.player.x,
-        y: gameDataRef.current.player.y,
-        team: gameDataRef.current.player.team,
-        health: gameDataRef.current.player.health,
-        isAlive: gameDataRef.current.player.isAlive,
-        role: 'player',
+        user_id: playerId, x: gameDataRef.current.player.x, y: gameDataRef.current.player.y,
+        team: gameDataRef.current.player.team, health: gameDataRef.current.player.health,
+        isAlive: gameDataRef.current.player.isAlive, role: 'player',
     });
 
     return () => {
         channel.off('presence', { event: 'sync' }, handlePresenceSync);
         channel.off('broadcast', { event: 'bullet-fired' }, handleBulletFired);
+        channel.off('broadcast', { event: 'player-move' }, handlePlayerMove); // <-- CLEAN UP LISTENER
     };
   }, [isMultiplayer, channel, playerId]);
   
-  // Effect for handling user input
+  // Input handler effect (no changes needed here)
   useEffect(() => {
+    // ... same as before
     const handleKeyDown = (e: KeyboardEvent) => { gameDataRef.current.keys[e.key.toLowerCase()] = true; };
     const handleKeyUp = (e: KeyboardEvent) => { gameDataRef.current.keys[e.key.toLowerCase()] = false; };
     const handleMouseMove = (e: MouseEvent) => {
@@ -151,6 +152,7 @@ const useGameLoop = ({
     };
   }, [canvasRef, gameState, channel]);
 
+  // Main game loop
   const gameLoop = useCallback(() => {
     const now = Date.now();
     const deltaTime = (now - lastUpdateTime.current) / 1000;
@@ -172,35 +174,34 @@ const useGameLoop = ({
       spawnEnemy(gameDataRef.current, canvas, setGameState, gameSettings);
       spawnBoss(gameDataRef.current, canvas, setGameState);
     }
-
-    setGameState(prev => {
-      const newTimeLeft = Math.max(0, prev.timeLeft - deltaTime);
-      if (newTimeLeft <= 0 && prev.timeLeft > 0) { // Only trigger onGameEnd once
-        onGameEnd(Math.floor((Date.now() - gameDataRef.current.gameStartTime) / 1000));
-        return { ...prev, timeLeft: 0 };
-      }
-      return { ...prev, timeLeft: newTimeLeft };
-    });
-
-    if (isMultiplayer && channel && playerId && Math.random() < 0.2) {
-      channel.track({
-        user_id: playerId,
-        x: gameDataRef.current.player.x,
-        y: gameDataRef.current.player.y,
-        team: gameDataRef.current.player.team,
-        health: gameDataRef.current.player.health,
-        isAlive: gameDataRef.current.player.isAlive,
-      });
+    
+    // --- MULTIPLAYER SEND LOGIC (The crucial change) ---
+    if (isMultiplayer && channel && playerId) {
+        // Broadcast position updates at a high frequency (e.g., 20 times per second)
+        const broadcastInterval = 50; // ms, 1000/50 = 20hz
+        if (now - lastPositionBroadcast.current > broadcastInterval) {
+            lastPositionBroadcast.current = now;
+            channel.send({
+                type: 'broadcast',
+                event: 'player-move',
+                payload: {
+                    id: playerId,
+                    x: gameDataRef.current.player.x,
+                    y: gameDataRef.current.player.y
+                }
+            });
+        }
     }
 
     // --- RENDER ---
     renderGame(canvas, gameDataRef.current);
 
     animationFrameId.current = requestAnimationFrame(gameLoop);
-  }, [gameSettings, isMultiplayer, onGameEnd, setGameState, channel, playerId, canvasRef, gameState]);
+  }, [gameSettings, isMultiplayer, setGameState, channel, playerId, canvasRef, gameState, onGameEnd]);
 
-  // Effect to start and stop the game loop
+  // Start/Stop effect (no changes needed here)
   useEffect(() => {
+    // ... same as before
     gameDataRef.current.player.team = gameSettings.gameMode === 'team-vs-team' ? (Math.random() < 0.5 ? 'red' : 'blue') : 'blue';
     gameDataRef.current.player.id = playerId || 'solo-player';
     lastUpdateTime.current = Date.now();
