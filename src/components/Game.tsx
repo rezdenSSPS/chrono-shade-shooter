@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import GameCanvas from './GameCanvas';
 import GameOverScreen from './GameOverScreen';
@@ -29,7 +30,7 @@ const Game = () => {
   const startMultiplayer = () => setGameState('multiplayerLobby');
   const showLeaderboard = () => setGameState('leaderboard');
   const backToMenu = () => setGameState('menu');
-
+  
   const endGame = (score: number) => {
     setFinalScore(score);
     setGameState('gameOver');
