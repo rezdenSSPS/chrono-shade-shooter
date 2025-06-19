@@ -1,11 +1,25 @@
-// /src/utils/gameLogic.ts (Unified and Corrected)
+// /src/utils/gameLogic.ts (Corrected and Final)
 
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import type { GameData, GameUIState, Bullet, Enemy, GameSettings, Player } from '@/types';
 
+// ==================================
+// NEW INTERPOLATION LOGIC
+// ==================================
+export function updateOtherPlayers(gameData: GameData) {
+    const interpolationFactor = 0.15; // A slightly higher value for snappier response
+
+    gameData.otherPlayers.forEach(player => {
+        if (!player.isAlive) return;
+        
+        // Smoothly move current (x, y) towards the target (targetX, targetY)
+        player.x += (player.targetX - player.x) * interpolationFactor;
+        player.y += (player.targetY - player.y) * interpolationFactor;
+    });
+}
 
 // ==================================
-// NEW SHOOTING LOGIC
+// SHOOTING LOGIC
 // ==================================
 export function shoot(gameData: GameData, gameState: GameUIState, channel?: RealtimeChannel | null) {
   if (!gameData.player.isAlive) return;
@@ -33,7 +47,6 @@ export function shoot(gameData: GameData, gameState: GameUIState, channel?: Real
     playerId: gameData.player.id,
     team: gameData.player.team,
     color: gameData.player.team === 'red' ? '#ff6666' : '#66b2ff',
-    // Calculate velocity based on angle and speed
     vx: Math.cos(angle) * bulletSpeed,
     vy: Math.sin(angle) * bulletSpeed,
   };
@@ -50,7 +63,7 @@ export function shoot(gameData: GameData, gameState: GameUIState, channel?: Real
 }
 
 // ==================================
-// NEW SPAWNING LOGIC
+// SPAWNING LOGIC
 // ==================================
 export function spawnEnemy(gameData: GameData, canvas: HTMLCanvasElement, setGameState: React.Dispatch<React.SetStateAction<GameUIState>>, gameSettings?: GameSettings) {
   const now = Date.now();
@@ -75,24 +88,22 @@ export function spawnEnemy(gameData: GameData, canvas: HTMLCanvasElement, setGam
         maxHealth: 100,
         isBoss: false,
         darkness: Math.random() * 0.5 + 0.2,
-        vx: 0, // Initialize velocity
-        vy: 0, // Initialize velocity
+        vx: 0,
+        vy: 0,
     };
     gameData.enemies.push(newEnemy);
   }
 }
 
-export const spawnBoss = (gameData: GameData, canvas: HTMLCanvasElement, setGameState: any) => { /* Your Boss Logic Here */ };
-
+export const spawnBoss = (gameData: GameData, canvas: HTMLCanvasElement, setGameState: any) => {};
 
 // ==================================
-// YOUR EXISTING LOGIC (WITH CORRECTIONS)
+// UPDATE & COLLISION LOGIC
 // ==================================
-
 export const updatePlayer = (gameData: GameData, canvas: HTMLCanvasElement) => {
+  if (!gameData.player.isAlive) return;
   const speed = 5;
   const { keys, player } = gameData;
-  if (player.isAlive === false) return;
   if (keys['w'] || keys['arrowup']) player.y -= speed;
   if (keys['s'] || keys['arrowdown']) player.y += speed;
   if (keys['a'] || keys['arrowleft']) player.x -= speed;
@@ -144,7 +155,6 @@ export const updateEnemies = (gameData: GameData) => {
     enemy.x += enemy.vx;
     enemy.y += enemy.vy;
   });
-
   for (let i = 0; i < gameData.enemies.length; i++) {
     for (let j = i + 1; j < gameData.enemies.length; j++) {
       const enemy1 = gameData.enemies[i];
@@ -172,15 +182,12 @@ export const checkBulletEnemyCollisions = (gameData: GameData, setGameState: Rea
       const bullet = gameData.bullets[i];
       const enemy = gameData.enemies[j];
       if (!bullet || !enemy) continue;
-
       const dx = bullet.x - enemy.x;
       const dy = bullet.y - enemy.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
-      
       if (distance < bullet.size + enemy.size / 2) {
-        enemy.health--; // *** CORRECTION: Use health instead of hp ***
+        enemy.health--;
         gameData.bullets.splice(i, 1);
-        
         if (enemy.health <= 0) {
           const timeBonus = Math.floor(enemy.darkness * 10) + (enemy.isBoss ? 30 : 5);
           setGameState(prev => ({
@@ -188,13 +195,11 @@ export const checkBulletEnemyCollisions = (gameData: GameData, setGameState: Rea
             timeLeft: prev.timeLeft + timeBonus,
             enemiesKilled: prev.enemiesKilled + 1,
             bossActive: enemy.isBoss ? false : prev.bossActive,
-            teamScores: (gameData.gameMode === 'team-vs-enemies' && bullet.team) 
-                ? { ...prev.teamScores, [bullet.team]: (prev.teamScores[bullet.team] || 0) + 1 } 
-                : prev.teamScores
+            teamScores: (gameData.gameMode === 'team-vs-enemies' && bullet.team) ? { ...prev.teamScores, [bullet.team]: (prev.teamScores[bullet.team] || 0) + 1 } : prev.teamScores
           }));
           gameData.enemies.splice(j, 1);
         }
-        break; // Bullet is gone, move to next bullet
+        break;
       }
     }
   }
@@ -213,7 +218,6 @@ export const checkPlayerEnemyCollisions = (gameData: GameData, setGameState: Rea
           player.health = Math.max(0, player.health - 25);
           if (player.health <= 0) {
             player.isAlive = false;
-            // In single player, end game immediately
             if (player.id === gameData.player.id && gameData.gameMode === 'survival') {
                 setGameState(prev => ({ ...prev, timeLeft: 0 }));
             }
@@ -230,17 +234,14 @@ export const checkPlayerBulletCollisions = (gameData: GameData, setGameState: Re
   for (let i = gameData.bullets.length - 1; i >= 0; i--) {
       const bullet = gameData.bullets[i];
       if (!bullet) continue;
-
       for (const player of allPlayers) {
         if (!player.isAlive || bullet.team === player.team) continue;
         const dx = bullet.x - player.x;
         const dy = bullet.y - player.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
-        
         if (distance < bullet.size + player.size / 2) {
           player.health = Math.max(0, player.health - bullet.damage);
           gameData.bullets.splice(i, 1);
-          
           if (player.health <= 0) {
             player.isAlive = false;
             setGameState(prev => ({
@@ -248,7 +249,7 @@ export const checkPlayerBulletCollisions = (gameData: GameData, setGameState: Re
               teamScores: bullet.team ? { ...prev.teamScores, [bullet.team]: (prev.teamScores[bullet.team] || 0) + 1 } : prev.teamScores
             }));
           }
-          break; // Bullet is gone, move to next bullet
+          break;
         }
       }
   }
