@@ -32,6 +32,12 @@ const Game = () => {
 
   const channelRef = useRef<RealtimeChannel | null>(null);
   const playerIdRef = useRef<string>(`p_${Math.random().toString(36).substring(2, 9)}`);
+  
+  // Create a ref to hold the isHost status to use in callbacks without dependency issues
+  const isHostRef = useRef(lobbyState.isHost);
+  useEffect(() => {
+    isHostRef.current = lobbyState.isHost;
+  }, [lobbyState.isHost]);
 
   const cleanupChannel = useCallback(() => {
     if (channelRef.current) {
@@ -44,10 +50,10 @@ const Game = () => {
     });
   }, []);
 
-  const transitionToGame = (code: string, settings: GameSettings) => {
+  const transitionToGame = useCallback((code: string, settings: GameSettings) => {
     setLobbyState(prev => ({ ...prev, code, settings }));
     setGameScreen('multiplayerGame');
-  };
+  }, []);
 
   const setupChannel = useCallback((code: string, isHost: boolean) => {
     cleanupChannel();
@@ -73,18 +79,22 @@ const Game = () => {
       .on('presence', { event: 'sync' }, onSync)
       .on('broadcast', { event: 'start-game' }, ({ payload }) => transitionToGame(code, payload.settings))
       .on('broadcast', { event: 'settings-update' }, ({ payload }) => {
-        setLobbyState(prev => (prev.isHost ? prev : { ...prev, settings: payload.settings }));
+        // Use the ref here to get the most up-to-date isHost value
+        if (!isHostRef.current) {
+            setLobbyState(prev => ({ ...prev, settings: payload.settings }));
+        }
       });
 
     channel.subscribe(status => {
       if (status === 'SUBSCRIBED') {
+        // IMPORTANT: We update the state here, which also updates the isHostRef.current
         setLobbyState(prev => ({ ...prev, code, isHost, isConnected: true }));
         channel.track({ user_id: playerIdRef.current, role: isHost ? 'host' : 'player' });
-      } else {
+      } else if (status !== 'CLOSED') {
         setLobbyState(prev => ({ ...prev, isConnected: false }));
       }
     });
-  }, [cleanupChannel]);
+  }, [cleanupChannel, transitionToGame]); // Correct dependencies
 
   const updateGameSettings = (newSettings: GameSettings) => {
     setLobbyState(prev => ({ ...prev, settings: newSettings }));
