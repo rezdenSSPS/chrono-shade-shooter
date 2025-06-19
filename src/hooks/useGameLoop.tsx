@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import type { GameData, GameSettings, GameUIState, Player, Bullet, Enemy } from '@/types';
 import { renderGame } from '@/utils/gameRenderer';
-import { updatePlayer, updateBullets, updateEnemies, checkBulletEnemyCollisions, checkPlayerEnemyCollisions, checkPlayerBulletCollisions, spawnEnemy, spawnBoss, shoot } from '@/utils/gameLogic';
+import { updatePlayer, updateBullets, updateEnemies, checkCollisions, spawnEnemy, spawnBoss, shoot } from '@/utils/gameLogic';
 import { supabase } from '@/integrations/supabase/client';
 
 interface UseGameLoopProps {
@@ -38,6 +38,7 @@ const useGameLoop = ({
   useEffect(() => {
     if (!isMultiplayer || !channel || !playerId) return;
 
+    // --- EVENT HANDLERS ---
     const handlePlayerHit = (payload: { payload: { playerId: string; newHealth: number }}) => {
       const { playerId: hitPlayerId, newHealth } = payload.payload;
       const player = hitPlayerId === playerId ? gameDataRef.current.player : gameDataRef.current.otherPlayers.find(p => p.id === hitPlayerId);
@@ -67,16 +68,16 @@ const useGameLoop = ({
 
     const handleEnemySpawn = (payload: { payload: { enemy: Enemy } }) => { if (!isHost) gameDataRef.current.enemies.push(payload.payload.enemy); };
     const handleEnemyHit = (payload: { payload: { enemyId: string, newHealth: number } }) => { const e = gameDataRef.current.enemies.find(en => en.id === payload.payload.enemyId); if (e) e.health = payload.payload.newHealth; };
-    const handleEnemyKilled = (payload: { payload: { enemyId: string, killerId: string } }) => {
+    const handleEnemyKilled = (payload: { payload: { enemyId: string } }) => {
         gameDataRef.current.enemies = gameDataRef.current.enemies.filter(en => en.id !== payload.payload.enemyId);
         setGameState(prev => ({ ...prev, enemiesKilled: prev.enemiesKilled + 1 }));
     };
     
     const handleBulletFired = (payload: { payload: { bullet: Bullet } }) => { if (payload.payload.bullet.playerId !== playerId) gameDataRef.current.bullets.push(payload.payload.bullet); };
-    const handlePlayerMove = (payload: { payload: { id: string, x: number, y: number, health: number, isAlive: boolean } }) => {
+    const handlePlayerMove = (payload: { payload: { id: string, x: number, y: number } }) => {
       if (payload.payload.id !== playerId) { 
         const p = gameDataRef.current.otherPlayers.find(pl => pl.id === payload.payload.id);
-        if (p) { p.x = payload.payload.x; p.y = payload.payload.y; p.health = payload.payload.health; p.isAlive = payload.payload.isAlive; }
+        if (p) { p.x = payload.payload.x; p.y = payload.payload.y; }
       }
     };
     const handleTimeUpdate = (payload: { payload: { timeLeft: number }}) => { if (!isHost) setGameState(prev => ({ ...prev, timeLeft: payload.payload.timeLeft })); };
@@ -124,10 +125,10 @@ const useGameLoop = ({
 
     if (!isMultiplayer || isHost) {
       const newTimeLeft = gameState.timeLeft - deltaTime;
-      const allPlayersDead = isMultiplayer && gameDataRef.current.otherPlayers.every(p => !p.isAlive) && !gameDataRef.current.player.isAlive;
+      const allPlayersDead = isMultiplayer && [gameDataRef.current.player, ...gameDataRef.current.otherPlayers].every(p => !p.isAlive);
       if (newTimeLeft <= 0 || (gameSettings.gameMode === 'team-vs-enemies' && allPlayersDead)) {
-        onGameEnd(gameState.enemiesKilled);
         if(isMultiplayer && channel) channel.send({type: 'broadcast', event: 'game-over' });
+        onGameEnd(gameState.enemiesKilled);
         if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
         return;
       }
@@ -140,17 +141,15 @@ const useGameLoop = ({
     
     if (!isMultiplayer || isHost) {
         updateEnemies(gameDataRef.current);
-        checkBulletEnemyCollisions(gameDataRef.current, channel);
-        checkPlayerEnemyCollisions(gameDataRef.current, channel);
-        if (gameSettings.gameMode === 'team-vs-team') {
-            checkPlayerBulletCollisions(gameDataRef.current, channel);
-        } else {
+        if(channel) checkCollisions(gameDataRef.current, channel);
+
+        if (gameSettings.gameMode !== 'team-vs-team') {
             const newEnemy = spawnEnemy(gameDataRef.current, canvas, gameSettings);
             if (newEnemy) {
                 gameDataRef.current.enemies.push(newEnemy);
                 if (channel) channel.send({ type: 'broadcast', event: 'enemy-spawn', payload: { enemy: newEnemy } });
             }
-            if (gameSettings.bossEnabled) spawnBoss(gameDataRef.current, canvas, setGameState);
+            if (gameSettings.bossEnabled) spawnBoss(gameDataRef.current, canvas);
         }
     }
 
@@ -158,9 +157,9 @@ const useGameLoop = ({
     updateBullets(gameDataRef.current, canvas);
 
     if (isMultiplayer && channel && playerId && gameDataRef.current.player.isAlive) {
-        if (now - lastPositionBroadcast.current > 16) {
+        if (now - lastPositionBroadcast.current > 32) { // Broadcast at ~30fps
             lastPositionBroadcast.current = now;
-            channel.send({ type: 'broadcast', event: 'player-move', payload: { id: playerId, x: gameDataRef.current.player.x, y: gameDataRef.current.player.y, health: gameDataRef.current.player.health, isAlive: gameDataRef.current.player.isAlive } });
+            channel.send({ type: 'broadcast', event: 'player-move', payload: { id: playerId, x: gameDataRef.current.player.x, y: gameDataRef.current.player.y } });
         }
     }
     renderGame(canvas, gameDataRef.current);
