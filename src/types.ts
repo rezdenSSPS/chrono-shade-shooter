@@ -7,7 +7,7 @@ export interface GameSettings {
   enemyCount: number;
   enemySpeed: number;
   enemyDamage: number;
-  bossEnabled: boolean; // Added for lobby settings
+  bossEnabled: boolean;
   gameMode: 'survival' | 'team-vs-enemies' | 'team-vs-team';
 }
 
@@ -41,7 +41,7 @@ export interface Player {
 }
 
 export interface Enemy {
-    id: string; // Crucial for multiplayer tracking
+    id: string;
     x: number;
     y: number;
     size: number;
@@ -49,12 +49,12 @@ export interface Enemy {
     health: number;
     maxHealth: number;
     isBoss: boolean;
-    darkness: number; // For your renderer
-    isAlive: boolean; // For logic and rendering
+    darkness: number;
+    isAlive: boolean;
 }
 
 export interface Bullet {
-    id: string; // Crucial for multiplayer tracking
+    id: string;
     x: number;
     y: number;
     size: number;
@@ -62,8 +62,8 @@ export interface Bullet {
     playerId: string;
     team?: 'red' | 'blue';
     color: string;
-    vx: number; // For physics
-    vy: number; // For physics
+    vx: number;
+    vy: number;
 }
 
 // GAME DATA: The complete state of the simulation for one client
