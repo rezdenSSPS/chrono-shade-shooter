@@ -5,23 +5,28 @@ import useGameLoop from '@/hooks/useGameLoop';
 
 interface GameCanvasProps {
   onGameEnd: (score: number) => void;
+  isMultiplayer?: boolean;
+  lobbyCode?: string;
 }
 
-const GameCanvas = ({ onGameEnd }: GameCanvasProps) => {
+const GameCanvas = ({ onGameEnd, isMultiplayer = false, lobbyCode }: GameCanvasProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [gameState, setGameState] = useState({
-    timeLeft: 60,
+    timeLeft: 180,
     gunLevel: 1,
+    fireRateLevel: 1,
+    bulletSizeLevel: 1,
     enemiesKilled: 0,
     bossActive: false,
-    gameStartTime: Date.now()
+    gameStartTime: Date.now(),
+    wave: 1
   });
 
-  const gameLoop = useGameLoop(canvasRef, gameState, setGameState, onGameEnd);
+  const gameLoop = useGameLoop(canvasRef, gameState, setGameState, onGameEnd, isMultiplayer, lobbyCode);
 
-  const purchaseUpgrade = () => {
-    const cost = getUpgradeCost();
-    if (gameState.timeLeft >= cost && gameState.gunLevel < 5) {
+  const purchaseGunUpgrade = () => {
+    const cost = getGunUpgradeCost();
+    if (gameState.timeLeft >= cost && gameState.gunLevel < 3) {
       setGameState(prev => ({
         ...prev,
         timeLeft: prev.timeLeft - cost,
@@ -30,79 +35,186 @@ const GameCanvas = ({ onGameEnd }: GameCanvasProps) => {
     }
   };
 
-  const getUpgradeCost = () => {
-    const costs = [0, 15, 25, 35, 50]; // Level 1 is free, then increasing costs
-    return costs[gameState.gunLevel] || 50;
+  const purchaseFireRateUpgrade = () => {
+    const cost = getFireRateUpgradeCost();
+    if (gameState.timeLeft >= cost && gameState.fireRateLevel < 3) {
+      setGameState(prev => ({
+        ...prev,
+        timeLeft: prev.timeLeft - cost,
+        fireRateLevel: prev.fireRateLevel + 1
+      }));
+    }
   };
 
-  const getUpgradeText = () => {
-    if (gameState.gunLevel >= 5) return "MAX LEVEL REACHED";
-    const cost = getUpgradeCost();
-    const gunNames = ['Pistol', 'Dual Pistols', 'Shotgun', 'Assault Rifle', 'Plasma Cannon'];
+  const purchaseBulletSizeUpgrade = () => {
+    const cost = getBulletSizeUpgradeCost();
+    if (gameState.timeLeft >= cost && gameState.bulletSizeLevel < 3) {
+      setGameState(prev => ({
+        ...prev,
+        timeLeft: prev.timeLeft - cost,
+        bulletSizeLevel: prev.bulletSizeLevel + 1
+      }));
+    }
+  };
+
+  const getGunUpgradeCost = () => {
+    const costs = [0, 20, 40];
+    return costs[gameState.gunLevel] || 40;
+  };
+
+  const getFireRateUpgradeCost = () => {
+    const costs = [0, 15, 30];
+    return costs[gameState.fireRateLevel] || 30;
+  };
+
+  const getBulletSizeUpgradeCost = () => {
+    const costs = [0, 25, 50];
+    return costs[gameState.bulletSizeLevel] || 50;
+  };
+
+  const getGunUpgradeText = () => {
+    if (gameState.gunLevel >= 3) return "MAX LEVEL";
+    const cost = getGunUpgradeCost();
+    const gunNames = ['Pistol', 'Shotgun', 'Assault Rifle'];
     const nextGun = gunNames[gameState.gunLevel] || 'Ultimate Weapon';
-    return `UPGRADE TO ${nextGun.toUpperCase()} - ${cost}s`;
+    return `${nextGun.toUpperCase()} - ${cost}s`;
   };
 
-  const canUpgrade = gameState.timeLeft >= getUpgradeCost() && gameState.gunLevel < 5;
+  const getFireRateUpgradeText = () => {
+    if (gameState.fireRateLevel >= 3) return "MAX RATE";
+    const cost = getFireRateUpgradeCost();
+    return `FIRE RATE LV${gameState.fireRateLevel + 1} - ${cost}s`;
+  };
+
+  const getBulletSizeUpgradeText = () => {
+    if (gameState.bulletSizeLevel >= 3) return "MAX SIZE";
+    const cost = getBulletSizeUpgradeCost();
+    return `BULLET SIZE LV${gameState.bulletSizeLevel + 1} - ${cost}s`;
+  };
+
+  const canUpgradeGun = gameState.timeLeft >= getGunUpgradeCost() && gameState.gunLevel < 3;
+  const canUpgradeFireRate = gameState.timeLeft >= getFireRateUpgradeCost() && gameState.fireRateLevel < 3;
+  const canUpgradeBulletSize = gameState.timeLeft >= getBulletSizeUpgradeCost() && gameState.bulletSizeLevel < 3;
 
   const displayTime = Math.floor(gameState.timeLeft);
 
   return (
-    <div className="flex flex-col items-center bg-gradient-to-b from-purple-900 via-blue-900 to-indigo-900 min-h-screen py-4">
-      {/* Enhanced HUD */}
-      <div className="bg-gradient-to-r from-gray-900 via-black to-gray-900 text-white p-6 mb-4 rounded-xl border-2 border-cyan-400 shadow-2xl">
-        <div className="flex space-x-8 text-xl font-bold">
-          <div className="flex items-center space-x-2">
-            <div className="w-3 h-3 bg-yellow-400 rounded-full animate-pulse"></div>
-            <span>Time: <span className="text-yellow-400 text-2xl">{displayTime}s</span></span>
+    <div className="flex h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 p-4">
+      {/* Left Panel - Upgrades */}
+      <div className="w-64 flex flex-col space-y-4 mr-4">
+        <div className="bg-gradient-to-r from-gray-900 via-black to-gray-900 text-white p-4 rounded-xl border-2 border-cyan-400 shadow-2xl">
+          <h3 className="text-xl font-bold text-cyan-400 mb-4">🔫 UPGRADES</h3>
+          <div className="space-y-3">
+            <Button
+              onClick={purchaseGunUpgrade}
+              disabled={!canUpgradeGun}
+              className={`w-full text-sm px-4 py-3 rounded-lg font-bold transition-all ${
+                canUpgradeGun 
+                  ? 'bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-400 hover:to-emerald-400 text-black' 
+                  : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+              }`}
+            >
+              {getGunUpgradeText()}
+            </Button>
+            
+            <Button
+              onClick={purchaseFireRateUpgrade}
+              disabled={!canUpgradeFireRate}
+              className={`w-full text-sm px-4 py-3 rounded-lg font-bold transition-all ${
+                canUpgradeFireRate 
+                  ? 'bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white' 
+                  : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+              }`}
+            >
+              {getFireRateUpgradeText()}
+            </Button>
+            
+            <Button
+              onClick={purchaseBulletSizeUpgrade}
+              disabled={!canUpgradeBulletSize}
+              className={`w-full text-sm px-4 py-3 rounded-lg font-bold transition-all ${
+                canUpgradeBulletSize 
+                  ? 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-400 hover:to-pink-400 text-white' 
+                  : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+              }`}
+            >
+              {getBulletSizeUpgradeText()}
+            </Button>
           </div>
-          <div className="flex items-center space-x-2">
-            <div className="w-3 h-3 bg-blue-400 rounded-full"></div>
-            <span>Gun: <span className="text-blue-400">Level {gameState.gunLevel}</span></span>
+        </div>
+
+        {isMultiplayer && lobbyCode && (
+          <div className="bg-gradient-to-r from-green-900 to-blue-900 text-white p-4 rounded-xl border-2 border-green-400">
+            <h3 className="text-lg font-bold text-green-400 mb-2">🌐 MULTIPLAYER</h3>
+            <p className="text-sm">Lobby: <span className="font-mono text-yellow-400">{lobbyCode}</span></p>
           </div>
-          <div className="flex items-center space-x-2">
-            <div className="w-3 h-3 bg-red-400 rounded-full"></div>
-            <span>Kills: <span className="text-red-400">{gameState.enemiesKilled}</span></span>
+        )}
+      </div>
+
+      {/* Center - Game Canvas */}
+      <div className="flex-1 flex flex-col items-center justify-center">
+        {/* Timer Display */}
+        <div className="bg-gradient-to-r from-yellow-600 to-orange-600 text-black p-4 mb-4 rounded-xl border-2 border-yellow-400 shadow-2xl">
+          <div className="text-4xl font-bold text-center">
+            ⏱️ {displayTime}s
           </div>
-          {gameState.bossActive && (
-            <div className="flex items-center space-x-2 animate-pulse">
-              <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-              <span className="text-red-500 font-bold text-xl">⚠️ BOSS FIGHT!</span>
-            </div>
-          )}
+        </div>
+
+        {/* Game Canvas - 16:9 aspect ratio */}
+        <div className="relative">
+          <canvas
+            ref={canvasRef}
+            width={1280}
+            height={720}
+            className="border-4 border-cyan-400 bg-gray-900 shadow-2xl shadow-cyan-400/30 max-w-full max-h-[70vh]"
+            style={{ cursor: 'crosshair', aspectRatio: '16/9' }}
+          />
+          <div className="absolute inset-0 border-4 border-cyan-400 rounded-lg shadow-2xl shadow-cyan-400/50 pointer-events-none"></div>
         </div>
       </div>
 
-      {/* Game Canvas with glow effect */}
-      <div className="relative">
-        <canvas
-          ref={canvasRef}
-          width={800}
-          height={600}
-          className="border-4 border-cyan-400 bg-gray-900 shadow-2xl shadow-cyan-400/30"
-          style={{ cursor: 'crosshair' }}
-        />
-        <div className="absolute inset-0 border-4 border-cyan-400 rounded-lg shadow-2xl shadow-cyan-400/50 pointer-events-none"></div>
-      </div>
+      {/* Right Panel - Stats */}
+      <div className="w-64 flex flex-col space-y-4 ml-4">
+        <div className="bg-gradient-to-r from-gray-900 via-black to-gray-900 text-white p-4 rounded-xl border-2 border-cyan-400 shadow-2xl">
+          <h3 className="text-xl font-bold text-cyan-400 mb-4">📊 STATS</h3>
+          <div className="space-y-3 text-lg">
+            <div className="flex items-center justify-between">
+              <span>Wave:</span>
+              <span className="text-purple-400 font-bold">{gameState.wave}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Kills:</span>
+              <span className="text-red-400 font-bold">{gameState.enemiesKilled}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Gun:</span>
+              <span className="text-green-400 font-bold">Lv{gameState.gunLevel}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Fire Rate:</span>
+              <span className="text-orange-400 font-bold">Lv{gameState.fireRateLevel}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span>Bullet Size:</span>
+              <span className="text-purple-400 font-bold">Lv{gameState.bulletSizeLevel}</span>
+            </div>
+            {gameState.bossActive && (
+              <div className="text-red-500 font-bold text-xl animate-pulse text-center">
+                ⚠️ BOSS FIGHT!
+              </div>
+            )}
+          </div>
+        </div>
 
-      {/* Enhanced Upgrade Button */}
-      <div className="mt-6">
-        <Button
-          onClick={purchaseUpgrade}
-          disabled={!canUpgrade}
-          className={`text-lg px-8 py-4 rounded-xl font-bold transform transition-all duration-200 ${
-            canUpgrade 
-              ? 'bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-400 hover:to-orange-400 text-black shadow-xl hover:scale-105 hover:shadow-2xl' 
-              : 'bg-gray-700 text-gray-400 cursor-not-allowed opacity-50'
-          }`}
-        >
-          {getUpgradeText()}
-        </Button>
-      </div>
-
-      <div className="mt-4 text-center">
-        <p className="text-cyan-300 text-lg font-semibold">🎯 Hunt dark enemies for maximum time bonus!</p>
-        <p className="text-purple-300 text-sm">💀 Boss spawns every 60 seconds • WASD to move • Mouse to aim & shoot</p>
+        <div className="bg-gradient-to-r from-blue-900 to-purple-900 text-white p-4 rounded-xl border-2 border-blue-400">
+          <h3 className="text-lg font-bold text-blue-400 mb-2">🎮 CONTROLS</h3>
+          <div className="text-sm space-y-1">
+            <p>⌨️ WASD - Move</p>
+            <p>🖱️ Mouse - Aim & Shoot</p>
+            <p>💰 Time = Currency</p>
+            <p>🎯 Dark = More Time</p>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -5,9 +5,10 @@ import { Button } from './ui/button';
 interface MainMenuProps {
   onStartGame: () => void;
   onShowLeaderboard: () => void;
+  onStartMultiplayer: () => void;
 }
 
-const MainMenu = ({ onStartGame, onShowLeaderboard }: MainMenuProps) => {
+const MainMenu = ({ onStartGame, onShowLeaderboard, onStartMultiplayer }: MainMenuProps) => {
   return (
     <div className="text-center text-white bg-gradient-to-b from-purple-900 via-blue-900 to-indigo-900 min-h-screen flex flex-col justify-center items-center">
       <div className="bg-black/60 p-12 rounded-3xl border-2 border-cyan-400 shadow-2xl">
@@ -27,7 +28,14 @@ const MainMenu = ({ onStartGame, onShowLeaderboard }: MainMenuProps) => {
             className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-400 hover:to-emerald-400 text-black text-3xl px-12 py-6 rounded-2xl font-bold transform hover:scale-110 transition-all shadow-2xl"
             size="lg"
           >
-            🚀 START HUNTING
+            🚀 SINGLE PLAYER
+          </Button>
+          <br />
+          <Button 
+            onClick={onStartMultiplayer}
+            className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white text-2xl px-10 py-5 rounded-2xl font-bold transform hover:scale-110 transition-all shadow-2xl"
+          >
+            🌐 MULTIPLAYER
           </Button>
           <br />
           <Button 
