@@ -53,7 +53,7 @@ const Game = () => {
           .flatMap((presences: any) => presences)
           .map((p: any): Player => ({
             id: p.user_id, role: p.role, team: p.team,
-            x: 0, y: 0, size: 20, health: 100, maxHealth: 100, isAlive: true, kills: 0,
+            x: 0, y: 0, size: 25, health: 100, maxHealth: 100, isAlive: true, kills: 0,
           }));
         setConnectedPlayers(players);
       })
@@ -125,27 +125,16 @@ const Game = () => {
   return (
     <div className="min-h-screen bg-black flex items-center justify-center">
       {gameScreen === 'menu' && (
-        <MainMenu 
-          onStartGame={() => setGameScreen('playing')} 
-          onShowLeaderboard={() => setGameScreen('leaderboard')}
-          onStartMultiplayer={() => setGameScreen('multiplayerLobby')}
-        />
+        <MainMenu onStartGame={() => setGameScreen('playing')} onShowLeaderboard={() => setGameScreen('leaderboard')} onStartMultiplayer={() => setGameScreen('multiplayerLobby')} />
       )}
       {gameScreen === 'playing' && (
         <GameCanvas onGameEnd={endGame} gameSettings={{ gameMode: 'survival', enemyCount: 10, enemySpeed: 1, enemyDamage: 1, bossEnabled: false }} />
       )}
       {gameScreen === 'multiplayerLobby' && (
-        <MultiplayerLobby 
-          lobbyCode={lobbyCode} isHost={isHost} connectedPlayers={connectedPlayers}
-          gameSettings={gameSettings} onCreateLobby={createLobby} onJoinLobby={joinLobby}
-          onUpdateSettings={updateGameSettings} onStartGame={startMultiplayerGame} onBackToMenu={backToMenu}
-        />
+        <MultiplayerLobby lobbyCode={lobbyCode} isHost={isHost} connectedPlayers={connectedPlayers} gameSettings={gameSettings} onCreateLobby={createLobby} onJoinLobby={joinLobby} onUpdateSettings={updateGameSettings} onStartGame={startMultiplayerGame} onBackToMenu={backToMenu} />
       )}
       {gameScreen === 'multiplayerGame' && channelRef.current && (
-        <GameCanvas 
-          onGameEnd={endGame} isMultiplayer={true} isHost={isHost} lobbyCode={lobbyCode}
-          gameSettings={gameSettings} channel={channelRef.current} playerId={playerIdRef.current}
-        />
+        <GameCanvas onGameEnd={endGame} isMultiplayer={true} isHost={isHost} lobbyCode={lobbyCode} gameSettings={gameSettings} channel={channelRef.current} playerId={playerIdRef.current} />
       )}
       {gameScreen === 'gameOver' && (
         <GameOverScreen score={finalScore} onBackToMenu={backToMenu} onShowLeaderboard={() => setGameScreen('leaderboard')} />
