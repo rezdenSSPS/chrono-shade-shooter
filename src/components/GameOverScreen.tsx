@@ -1,9 +1,10 @@
+// src/components/GameOverScreen.tsx
 
 import React, { useState } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner'; // UPDATE: Using Sonner for toasts
 
 interface GameOverScreenProps {
   score: number;
@@ -15,14 +16,12 @@ const GameOverScreen = ({ score, onBackToMenu, onShowLeaderboard }: GameOverScre
   const [playerName, setPlayerName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasSubmitted, setHasSubmitted] = useState(false);
-  const { toast } = useToast();
 
   const submitScore = async () => {
     if (!playerName.trim()) {
-      toast({
-        title: "Enter your name",
+      // UPDATE: Switched to sonner toast
+      toast.error("Enter your name", {
         description: "Please enter a name to submit your score",
-        variant: "destructive"
       });
       return;
     }
@@ -40,17 +39,16 @@ const GameOverScreen = ({ score, onBackToMenu, onShowLeaderboard }: GameOverScre
 
       if (error) throw error;
 
-      toast({
-        title: "Score submitted!",
+      // UPDATE: Switched to sonner toast
+      toast.success("Score submitted!", {
         description: "Your score has been added to the leaderboard",
       });
       setHasSubmitted(true);
     } catch (error) {
       console.error('Error submitting score:', error);
-      toast({
-        title: "Error",
+      // UPDATE: Switched to sonner toast
+      toast.error("Error", {
         description: "Failed to submit score. Please try again.",
-        variant: "destructive"
       });
     } finally {
       setIsSubmitting(false);
@@ -61,7 +59,7 @@ const GameOverScreen = ({ score, onBackToMenu, onShowLeaderboard }: GameOverScre
     <div className="text-center text-white bg-gradient-to-b from-red-900 via-purple-900 to-black min-h-screen flex flex-col justify-center items-center">
       <div className="bg-black/60 p-8 rounded-2xl border-2 border-red-500 shadow-2xl">
         <h1 className="text-6xl font-bold mb-6 text-red-400 animate-pulse">💀 GAME OVER 💀</h1>
-        <p className="text-4xl mb-8">Survival Time: <span className="text-yellow-400 font-bold">{score} seconds</span></p>
+        <p className="text-4xl mb-8">Final Score: <span className="text-yellow-400 font-bold">{score}</span></p>
         
         {!hasSubmitted ? (
           <div className="mb-8">
