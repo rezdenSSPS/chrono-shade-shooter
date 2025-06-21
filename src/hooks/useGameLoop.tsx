@@ -65,6 +65,7 @@ const useGameLoop = ({
   const lastStateBroadcast = useRef(0);
   const respawnTimeouts = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
+  // This logic is only ever run by the host. It is the authority on hits.
   const processHit = useCallback((victimId: string, killerId: string, damage: number) => {
     if (!isHost) return;
 
@@ -90,8 +91,6 @@ const useGameLoop = ({
         if (canvasRef.current) {
           victim.x = Math.random() * canvasRef.current.width;
           victim.y = Math.random() * canvasRef.current.height;
-          victim.targetX = victim.x;
-          victim.targetY = victim.y;
         }
         respawnTimeouts.current.delete(victimId);
       }, 3000);
@@ -99,6 +98,7 @@ const useGameLoop = ({
     }
   }, [isHost, setGameState, canvasRef]);
   
+  // Collision logic can run on both, but only the host's result matters for state changes.
   const checkPlayerBulletCollisions = useCallback(() => {
     const { bullets, player, otherPlayers } = gameDataRef.current;
     const allPlayers = [player, ...otherPlayers];
@@ -125,6 +125,7 @@ const useGameLoop = ({
   }, [isHost, channel, processHit, playerId]);
 
   useEffect(() => {
+    // Input listeners are the same for everyone
     const handleKeyDown = (e: KeyboardEvent) => { gameDataRef.current.keys[e.key.toLowerCase()] = true; };
     const handleKeyUp = (e: KeyboardEvent) => { gameDataRef.current.keys[e.key.toLowerCase()] = false; };
     const handleMouseDown = () => { gameDataRef.current.mouse.isDown = true; };
@@ -153,57 +154,33 @@ const useGameLoop = ({
     };
   }, [canvasRef]);
 
+  // This useEffect sets up all the network event handlers
   useEffect(() => {
     if (!isMultiplayer || !channel || !playerId) return;
 
+    // Only the host processes hit registration
     const handlePlayerHit = (payload: { payload: { victimId: string, killerId: string, damage: number }}) => {
       if (isHost) {
         processHit(payload.payload.victimId, payload.payload.killerId, payload.payload.damage);
       }
     };
 
-    const handlePresenceSync = () => {
-      const presenceState = channel.presenceState();
-      const newOtherPlayers: Player[] = [];
-      for (const id in presenceState) {
-        const presences = presenceState[id] as any[];
-        const pState = presences[0];
-        if (pState.user_id !== playerId) {
-          const existingPlayer = gameDataRef.current.otherPlayers.find(p => p.id === pState.user_id);
-          const player_data = {
-            id: pState.user_id, x: pState.x || 0, y: pState.y || 0, targetX: pState.x || 0, targetY: pState.y || 0,
-            health: pState.health || 100, maxHealth: 100, isAlive: pState.isAlive !== false, team: pState.team, 
-            role: pState.role, size: 20, kills: pState.kills || 0,
-            gunLevel: pState.gunLevel || 1, fireRateLevel: pState.fireRateLevel || 1, bulletSizeLevel: pState.bulletSizeLevel || 1,
-          };
-          if (existingPlayer) {
-            Object.assign(existingPlayer, player_data);
-            newOtherPlayers.push(existingPlayer);
-          } else {
-            newOtherPlayers.push(player_data);
-          }
-        }
-      }
-      gameDataRef.current.otherPlayers = newOtherPlayers;
-    };
-
+    // Client receives authoritative state from host
     const handleGameStateUpdate = (payload: { payload: { enemies: Enemy[], players: Player[], timeLeft: number, teamScores: { red: number, blue: number } } }) => {
-        // A client should never process a game state update it sends itself.
-        if (isHost) return;
+        if (isHost) return; // Host never processes its own state updates.
 
         const { enemies, players, timeLeft, teamScores } = payload.payload;
         gameDataRef.current.enemies = enemies;
 
         players.forEach(networkPlayer => {
             if (networkPlayer.id === playerId) {
-                // This is ME. The host is telling me my authoritative state (health, kills, etc.)
+                // Update my own state from the host's perspective
                 const self = gameDataRef.current.player;
                 self.health = networkPlayer.health;
                 if (self.isAlive && !networkPlayer.isAlive) setIsSpectating(true);
                 if (!self.isAlive && networkPlayer.isAlive) {
                   setIsSpectating(false);
                   self.x = networkPlayer.x; self.y = networkPlayer.y;
-                  self.targetX = networkPlayer.x; self.targetY = networkPlayer.y;
                 }
                 self.isAlive = networkPlayer.isAlive;
                 self.kills = networkPlayer.kills;
@@ -216,22 +193,12 @@ const useGameLoop = ({
                     fireRateLevel: self.fireRateLevel, bulletSizeLevel: self.bulletSizeLevel
                 }));
             } else {
-                // This is an OTHER player (including the host). Update their state.
+                // Update other players' state
                 let otherPlayer = gameDataRef.current.otherPlayers.find(p => p.id === networkPlayer.id);
                 if (!otherPlayer) {
                     otherPlayer = { ...networkPlayer, targetX: networkPlayer.x, targetY: networkPlayer.y };
                     gameDataRef.current.otherPlayers.push(otherPlayer);
                 } else {
-                    // *************************************************************** //
-                    //                        THE MOVEMENT FIX                         //
-                    // *************************************************************** //
-                    // Instead of snapping X/Y, update the TARGET X/Y. The game loop's //
-                    // interpolation logic will then smoothly move the player. This    //
-                    // prevents the "jumping" effect for the host and other players.   //
-                    otherPlayer.targetX = networkPlayer.x;
-                    otherPlayer.targetY = networkPlayer.y;
-
-                    // Directly update non-positional stats as these don't need smoothing.
                     otherPlayer.health = networkPlayer.health;
                     otherPlayer.isAlive = networkPlayer.isAlive;
                     otherPlayer.kills = networkPlayer.kills;
@@ -244,22 +211,37 @@ const useGameLoop = ({
         setGameState(prev => ({...prev, timeLeft, teamScores }));
     };
     
+    // Everyone receives bullets from others
     const handleBulletFired = (payload: { payload: { bullet: Bullet } }) => {
       if (payload.payload.bullet.playerId !== playerId) {
         gameDataRef.current.bullets.push(payload.payload.bullet);
       }
     };
 
+    // *************************************************************** //
+    //                  THE CORE MOVEMENT FIX (PART 1)                 //
+    // *************************************************************** //
+    // How to interpret a `player-move` event depends on who you are.
     const handlePlayerMove = (payload: { payload: { id: string, x: number, y: number } }) => {
-        if (payload.payload.id !== playerId) {
-            const movedPlayer = gameDataRef.current.otherPlayers.find(p => p.id === payload.payload.id);
-            if (movedPlayer) {
-                movedPlayer.targetX = payload.payload.x;
-                movedPlayer.targetY = payload.payload.y;
-            }
+        if (payload.payload.id === playerId) return; // Never process your own movement
+        
+        const movedPlayer = gameDataRef.current.otherPlayers.find(p => p.id === payload.payload.id);
+        if (!movedPlayer) return;
+
+        if (isHost) {
+            // I AM THE HOST. I receive a client's position. This is their true position.
+            // Set it directly. NO INTERPOLATION.
+            movedPlayer.x = payload.payload.x;
+            movedPlayer.y = payload.payload.y;
+        } else {
+            // I AM A CLIENT. I receive another player's (host or other client) position.
+            // I set this as their TARGET, and my game loop will smooth the movement.
+            movedPlayer.targetX = payload.payload.x;
+            movedPlayer.targetY = payload.payload.y;
         }
     };
     
+    // Only host processes upgrade purchases
     const handleUpgradePurchase = (payload: { payload: { upgradeType: string }, [key: string]: any }) => {
         if (isHost) {
             const pId = payload.user_id;
@@ -281,22 +263,22 @@ const useGameLoop = ({
         }
     };
 
-    channel.on('presence', { event: 'sync' }, handlePresenceSync);
+    // Subscribe to all events
+    channel.on('presence', { event: 'sync' }, () => { /* Presence logic can be added here if needed */ });
     channel.on('broadcast', { event: 'game-state-update' }, handleGameStateUpdate);
     channel.on('broadcast', { event: 'bullet-fired' }, handleBulletFired);
     channel.on('broadcast', { event: 'player-move' }, handlePlayerMove);
     channel.on('broadcast', { event: 'purchase-upgrade' }, handleUpgradePurchase);
     channel.on('broadcast', { event: 'player-hit' }, handlePlayerHit);
     
-    handlePresenceSync();
-
     return () => {
-        channel.off('presence', { event: 'sync' });
+        channel.off('presence');
         channel.off('broadcast');
         respawnTimeouts.current.forEach(timeout => clearTimeout(timeout));
     };
   }, [isMultiplayer, channel, playerId, isHost, setGameState, setIsSpectating, processHit]);
 
+  // The main game loop, run by everyone on every frame.
   const gameLoop = useCallback(() => {
     const now = Date.now();
     const deltaTime = (now - lastUpdateTime.current) / 1000;
@@ -307,62 +289,76 @@ const useGameLoop = ({
 
     const { player, otherPlayers, mouse } = gameDataRef.current;
     
+    // Everyone handles their own shooting input
     if (mouse.isDown && player.isAlive) {
         shoot(gameDataRef.current, player, channel, isMultiplayer);
     }
 
+    // Everyone updates their own player's position based on their own input
     if (player.isAlive) {
         updatePlayer(gameDataRef.current, canvas);
     }
+    
+    // Everyone updates all bullets locally for smooth rendering
     updateBullets(gameDataRef.current, canvas);
 
-    otherPlayers.forEach(p => {
-      if (p.isAlive) {
-        const lerpFactor = 0.2;
-        p.x += (p.targetX - p.x) * lerpFactor;
-        p.y += (p.targetY - p.y) * lerpFactor;
-      }
-    });
+    // *************************************************************** //
+    //                  THE CORE MOVEMENT FIX (PART 2)                 //
+    // *************************************************************** //
+    // ONLY CLIENTS should interpolate other players. The host has the //
+    // true positions and doesn't need to smooth them.                 //
+    if (!isHost) {
+        otherPlayers.forEach(p => {
+            if (p.isAlive) {
+                // Smoothly move the visual representation of other players to their target position
+                const lerpFactor = 0.2;
+                p.x += (p.targetX - p.x) * lerpFactor;
+                p.y += (p.targetY - p.y) * lerpFactor;
+            }
+        });
+    }
     
+    // PvP collision logic
     if (gameSettings.gameMode === 'team-vs-team') {
       checkPlayerBulletCollisions();
     }
     
-    setGameState(prev => {
-        let newTimeLeft = prev.timeLeft;
-        let newTeamScores = prev.teamScores;
-
-        if (isHost || !isMultiplayer) {
-            newTimeLeft = prev.timeLeft - deltaTime;
-            if (newTimeLeft <= 0) {
-                const finalScore = gameSettings.gameMode === 'team-vs-team' 
-                    ? Math.max(prev.teamScores.red, prev.teamScores.blue) 
-                    : prev.kills;
-                onGameEnd(finalScore);
-                if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
-                return prev;
-            }
-
-            updateEnemies(gameDataRef.current);
-            const allCurrentPlayers = [gameDataRef.current.player, ...gameDataRef.current.otherPlayers];
-            const isPvp = gameSettings.gameMode === 'team-vs-team';
-            const timeGained = checkBulletEnemyCollisions(gameDataRef.current, allCurrentPlayers, isPvp);
-            checkPlayerEnemyCollisions(gameDataRef.current, allCurrentPlayers);
-            if (!isPvp && timeGained > 0) {
-                newTimeLeft += timeGained;
-            }
-            spawnEnemy(gameDataRef.current, canvas, gameSettings);
-            spawnBoss(gameDataRef.current, canvas);
+    // ONLY THE HOST runs the main game simulation (time, enemies, collisions)
+    if (isHost || !isMultiplayer) {
+      setGameState(prev => {
+        let newTimeLeft = prev.timeLeft - deltaTime;
+        if (newTimeLeft <= 0) {
+            const finalScore = gameSettings.gameMode === 'team-vs-team' 
+                ? Math.max(prev.teamScores.red, prev.teamScores.blue) 
+                : prev.kills;
+            onGameEnd(finalScore);
+            if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
+            return prev;
         }
+
+        updateEnemies(gameDataRef.current);
+        const allCurrentPlayers = [gameDataRef.current.player, ...gameDataRef.current.otherPlayers];
+        const isPvp = gameSettings.gameMode === 'team-vs-team';
+        const timeGained = checkBulletEnemyCollisions(gameDataRef.current, allCurrentPlayers, isPvp);
+        checkPlayerEnemyCollisions(gameDataRef.current, allCurrentPlayers);
+        if (!isPvp && timeGained > 0) {
+            newTimeLeft += timeGained;
+        }
+        spawnEnemy(gameDataRef.current, canvas, gameSettings);
+        spawnBoss(gameDataRef.current, canvas);
         
-        return { ...prev, timeLeft: newTimeLeft, teamScores: newTeamScores };
-    });
+        return { ...prev, timeLeft: newTimeLeft };
+      });
+    }
     
+    // Networking broadcasts
     if (isMultiplayer && channel && playerId) {
+        // Everyone broadcasts their own position frequently
         if (now - lastPositionBroadcast.current > 50 && player.isAlive) {
             lastPositionBroadcast.current = now;
             channel.send({ type: 'broadcast', event: 'player-move', payload: { id: playerId, x: player.x, y: player.y }});
         }
+        // Only the host broadcasts the authoritative game state
         if (isHost && now - lastStateBroadcast.current > 100) {
             lastStateBroadcast.current = now;
             channel.send({
@@ -381,11 +377,12 @@ const useGameLoop = ({
     animationFrameId.current = requestAnimationFrame(gameLoop);
   }, [gameSettings, isMultiplayer, setGameState, channel, playerId, canvasRef, onGameEnd, isHost, checkPlayerBulletCollisions, gameState.timeLeft, gameState.teamScores]);
 
+  // This useEffect starts the game loop
   useEffect(() => {
-    gameDataRef.current.player.id = playerId || 'solo-player';
     lastUpdateTime.current = Date.now();
     
     if (isMultiplayer && channel && playerId) {
+      // Announce presence to the channel
       channel.track({
         user_id: playerId, x: gameDataRef.current.player.x, y: gameDataRef.current.player.y,
         team: gameDataRef.current.player.team,
