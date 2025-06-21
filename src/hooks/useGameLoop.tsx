@@ -49,7 +49,7 @@ const useGameLoop = ({
       isAlive: true, kills: 0,
     },
     otherPlayers: [], enemies: [], bullets: [],
-    keys: {}, mouse: { x: 0, y: 0, isDown: false }, // Initialize isDown
+    keys: {}, mouse: { x: 0, y: 0, isDown: false },
     lastShot: 0, lastEnemySpawn: 0, lastBossSpawn: 0,
     gameMode: gameSettings.gameMode, gameStartTime: Date.now(),
   });
@@ -60,7 +60,6 @@ const useGameLoop = ({
   const lastStateBroadcast = useRef(0);
   const respawnTimeouts = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
-  // Authoritative hit processing (no changes from previous step)
   const processHit = useCallback((victimId: string, killerId: string, damage: number) => {
     if (!isHost) return;
     const allPlayers = [gameDataRef.current.player, ...gameDataRef.current.otherPlayers];
@@ -93,7 +92,6 @@ const useGameLoop = ({
     }
   }, [isHost, setGameState, canvasRef]);
   
-  // PvP Collision Logic (no changes from previous step)
   const checkPlayerBulletCollisions = useCallback(() => {
     const { bullets, player, otherPlayers } = gameDataRef.current;
     const allPlayers = [player, ...otherPlayers];
@@ -119,13 +117,12 @@ const useGameLoop = ({
     }
   }, [isHost, channel, processHit, playerId]);
 
-  // Restructured Input and Canvas Setup Effect
+  // Input and Canvas Setup Effect (no changes)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => { gameDataRef.current.keys[e.key.toLowerCase()] = true; };
     const handleKeyUp = (e: KeyboardEvent) => { gameDataRef.current.keys[e.key.toLowerCase()] = false; };
     const handleMouseDown = () => { gameDataRef.current.mouse.isDown = true; };
     const handleMouseUp = () => { gameDataRef.current.mouse.isDown = false; };
-
     const handleMouseMove = (e: MouseEvent) => {
         const rect = canvasRef.current?.getBoundingClientRect();
         if (rect) {
@@ -133,27 +130,19 @@ const useGameLoop = ({
             gameDataRef.current.mouse.y = e.clientY - rect.top;
         }
     };
-
     const handleResize = () => {
-      const canvas = canvasRef.current;
-      if (canvas) {
-          // This is the fix for the zoom issue.
-          // Set the internal drawing surface size to match the window.
-          canvas.width = window.innerWidth;
-          canvas.height = window.innerHeight;
+      if (canvasRef.current) {
+          canvasRef.current.width = window.innerWidth;
+          canvasRef.current.height = window.innerHeight;
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mouseup', handleMouseUp);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('resize', handleResize);
-
-    // Call resize immediately on mount to set the initial canvas size correctly
     handleResize();
-
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
@@ -162,30 +151,133 @@ const useGameLoop = ({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('resize', handleResize);
     };
-  }, [canvasRef]); // This effect should only run once when the component mounts
+  }, [canvasRef]);
 
-  // Multiplayer Listeners Effect (no changes from previous step)
+  // Multiplayer Listeners Effect
   useEffect(() => {
     if (!isMultiplayer || !channel || !playerId) return;
 
-    const handlePlayerHit = (payload: { payload: { victimId: string, killerId: string, damage: number }}) => { /* ...same... */ };
-    const handlePresenceSync = () => { /* ...same... */ };
-    const handleGameStateUpdate = (payload: any) => { /* ...same... */ };
-    const handleBulletFired = (payload: any) => { /* ...same... */ };
-    const handlePlayerMove = (payload: any) => { /* ...same... */ };
-    const handleUpgradePurchase = (payload: any) => { /* ...same... */ };
+    const handlePlayerHit = (payload: { payload: { victimId: string, killerId: string, damage: number }}) => {
+      if (isHost) {
+        processHit(payload.payload.victimId, payload.payload.killerId, payload.payload.damage);
+      }
+    };
 
+    const handlePresenceSync = () => {
+      const presenceState = channel.presenceState();
+      const newOtherPlayers: Player[] = [];
+      for (const id in presenceState) {
+        const presences = presenceState[id] as any[];
+        const pState = presences[0];
+        if (pState.user_id !== playerId) {
+          // Check if player already exists
+          const existingPlayer = gameDataRef.current.otherPlayers.find(p => p.id === pState.user_id);
+          if (existingPlayer) {
+            newOtherPlayers.push(existingPlayer); // Keep existing object to preserve interpolation state
+          } else {
+            // Add a new player
+            newOtherPlayers.push({
+              id: pState.user_id, x: pState.x || 0, y: pState.y || 0,
+              targetX: pState.x || 0, targetY: pState.y || 0,
+              health: pState.health || 100, maxHealth: 100,
+              isAlive: pState.isAlive !== false, team: pState.team, 
+              role: pState.role, size: 20, kills: pState.kills || 0,
+            });
+          }
+        }
+      }
+      gameDataRef.current.otherPlayers = newOtherPlayers;
+    };
+
+    const handleGameStateUpdate = (payload: { payload: { enemies: Enemy[], players: Player[], timeLeft: number, teamScores: { red: number, blue: number } } }) => {
+        if (!isHost) {
+            gameDataRef.current.enemies = payload.payload.enemies;
+
+            // Update local state based on the authoritative state from the host
+            payload.payload.players.forEach(networkPlayer => {
+                if (networkPlayer.id === playerId) {
+                    // Update our own player's state
+                    const self = gameDataRef.current.player;
+                    self.health = networkPlayer.health;
+                    if (self.isAlive && !networkPlayer.isAlive) setIsSpectating(true);
+                    if (!self.isAlive && networkPlayer.isAlive) {
+                      setIsSpectating(false);
+                      // On respawn, snap to new position
+                      self.x = networkPlayer.x;
+                      self.y = networkPlayer.y;
+                      self.targetX = networkPlayer.targetX;
+                      self.targetY = networkPlayer.targetY;
+                    }
+                    self.isAlive = networkPlayer.isAlive;
+                    self.kills = networkPlayer.kills;
+                } else {
+                    // Find the corresponding local player
+                    let otherPlayer = gameDataRef.current.otherPlayers.find(p => p.id === networkPlayer.id);
+
+                    // If player doesn't exist locally, create them (handles players joining mid-game)
+                    if (!otherPlayer) {
+                        otherPlayer = { ...networkPlayer };
+                        gameDataRef.current.otherPlayers.push(otherPlayer);
+                    } else {
+                        // Just update their stats, not position (handled by player-move)
+                        otherPlayer.health = networkPlayer.health;
+                        otherPlayer.isAlive = networkPlayer.isAlive;
+                        otherPlayer.kills = networkPlayer.kills;
+                        if (!otherPlayer.isAlive && networkPlayer.isAlive) { // Respawned
+                           otherPlayer.x = networkPlayer.x;
+                           otherPlayer.y = networkPlayer.y;
+                           otherPlayer.targetX = networkPlayer.targetX;
+                           otherPlayer.targetY = networkPlayer.targetY;
+                        }
+                    }
+                }
+            });
+            setGameState(prev => ({...prev, timeLeft: payload.payload.timeLeft, teamScores: payload.payload.teamScores }));
+        }
+    };
+    
+    const handleBulletFired = (payload: { payload: { bullet: Bullet } }) => {
+      if (payload.payload.bullet.playerId !== playerId) {
+        gameDataRef.current.bullets.push(payload.payload.bullet);
+      }
+    };
+
+    const handlePlayerMove = (payload: { payload: { id: string, x: number, y: number } }) => {
+        if (payload.payload.id !== playerId) {
+            const movedPlayer = gameDataRef.current.otherPlayers.find(p => p.id === payload.payload.id);
+            if (movedPlayer) {
+                movedPlayer.targetX = payload.payload.x;
+                movedPlayer.targetY = payload.payload.y;
+            }
+        }
+    };
+    
+    const handleUpgradePurchase = (payload: { payload: { upgradeType: string, cost: number }}) => {
+        if (!isHost) {
+            setGameState(prev => ({...prev, timeLeft: prev.timeLeft - payload.payload.cost, [`${payload.payload.upgradeType}Level`]: prev[`${payload.payload.upgradeType}Level`] + 1 }));
+        }
+    };
+
+    channel.on('presence', { event: 'sync' }, handlePresenceSync);
+    channel.on('broadcast', { event: 'game-state-update' }, handleGameStateUpdate);
+    channel.on('broadcast', { event: 'bullet-fired' }, handleBulletFired);
+    channel.on('broadcast', { event: 'player-move' }, handlePlayerMove);
+    channel.on('broadcast', { event: 'purchase-upgrade' }, handleUpgradePurchase);
     channel.on('broadcast', { event: 'player-hit' }, handlePlayerHit);
-    // ... all other channel listeners
+    
     handlePresenceSync();
 
     return () => {
-      // ... all channel listener cleanup
-      respawnTimeouts.current.forEach(timeout => clearTimeout(timeout));
+        channel.off('presence', { event: 'sync' });
+        channel.off('broadcast', { event: 'game-state-update' });
+        channel.off('broadcast', { event: 'bullet-fired' });
+        channel.off('broadcast', { event: 'player-move' });
+        channel.off('broadcast', { event: 'purchase-upgrade' });
+        channel.off('broadcast', { event: 'player-hit' });
+        respawnTimeouts.current.forEach(timeout => clearTimeout(timeout));
     };
   }, [isMultiplayer, channel, playerId, isHost, setGameState, setIsSpectating, processHit]);
 
-  // Main Game Loop
   const gameLoop = useCallback(() => {
     const now = Date.now();
     const deltaTime = (now - lastUpdateTime.current) / 1000;
@@ -196,7 +288,6 @@ const useGameLoop = ({
 
     const { player, otherPlayers, mouse } = gameDataRef.current;
     
-    // NEW: Handle shooting inside the game loop based on mouse state
     if (mouse.isDown && player.isAlive) {
         shoot(gameDataRef.current, gameState, channel, isMultiplayer);
     }
@@ -219,7 +310,6 @@ const useGameLoop = ({
     }
     
     if (isHost || !isMultiplayer) {
-      // ... host logic is the same as previous step
       const newTimeLeft = gameState.timeLeft - deltaTime;
       if (newTimeLeft <= 0) {
         const finalScore = gameSettings.gameMode === 'team-vs-team' ? Math.max(gameState.teamScores.red, gameState.teamScores.blue) : player.kills;
@@ -228,23 +318,46 @@ const useGameLoop = ({
         return;
       }
       setGameState(prev => ({ ...prev, timeLeft: newTimeLeft }));
+
       if (gameSettings.gameMode !== 'team-vs-team') {
-        // PvE logic
+        updateEnemies(gameDataRef.current);
+        const allCurrentPlayers = [player, ...otherPlayers];
+        const timeGained = checkBulletEnemyCollisions(gameDataRef.current, setGameState, allCurrentPlayers);
+        checkPlayerEnemyCollisions(gameDataRef.current, setGameState, allCurrentPlayers);
+        if (timeGained > 0) {
+            setGameState(prev => ({...prev, timeLeft: prev.timeLeft + timeGained}));
+        }
+        spawnEnemy(gameDataRef.current, canvas, setGameState, gameSettings);
+        spawnBoss(gameDataRef.current, canvas, setGameState);
       }
     }
     
     if (isMultiplayer && channel && playerId) {
-      // ... broadcast logic is the same
+        const positionBroadcastInterval = 50;
+        if (now - lastPositionBroadcast.current > positionBroadcastInterval && player.isAlive) {
+            lastPositionBroadcast.current = now;
+            channel.send({ type: 'broadcast', event: 'player-move', payload: { id: playerId, x: player.x, y: player.y }});
+        }
+
+        const stateBroadcastInterval = 100;
+        if (isHost && now - lastStateBroadcast.current > stateBroadcastInterval) {
+            lastStateBroadcast.current = now;
+            channel.send({
+                type: 'broadcast', event: 'game-state-update',
+                payload: {
+                    enemies: gameDataRef.current.enemies,
+                    players: [gameDataRef.current.player, ...gameDataRef.current.otherPlayers],
+                    timeLeft: gameState.timeLeft,
+                    teamScores: gameState.teamScores,
+                }
+            });
+        }
     }
 
     renderGame(canvas, gameDataRef.current, playerId);
     animationFrameId.current = requestAnimationFrame(gameLoop);
-  }, [
-    gameSettings, isMultiplayer, setGameState, channel, playerId, canvasRef, 
-    gameState, onGameEnd, isHost, checkPlayerBulletCollisions
-  ]);
+  }, [gameSettings, isMultiplayer, setGameState, channel, playerId, canvasRef, gameState, onGameEnd, isHost, checkPlayerBulletCollisions]);
 
-  // Start/Stop Effect
   useEffect(() => {
     gameDataRef.current.player.team = gameSettings.gameMode === 'team-vs-team' ? (Math.random() < 0.5 ? 'red' : 'blue') : 'blue';
     gameDataRef.current.player.id = playerId || 'solo-player';
