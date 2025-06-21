@@ -47,6 +47,7 @@ const useGameLoop = ({
       targetX: window.innerWidth / 2, targetY: window.innerHeight / 2,
       size: 20, health: 100, maxHealth: 100,
       isAlive: true, kills: 0,
+      gunLevel: 1, fireRateLevel: 1, bulletSizeLevel: 1,
     },
     otherPlayers: [], enemies: [], bullets: [],
     keys: {}, mouse: { x: 0, y: 0, isDown: false },
@@ -60,10 +61,6 @@ const useGameLoop = ({
   const lastStateBroadcast = useRef(0);
   const respawnTimeouts = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
-  // =================================================================
-  // START OF FIX
-  // =================================================================
-
   const processHit = useCallback((victimId: string, killerId: string, damage: number) => {
     if (!isHost) return;
 
@@ -72,38 +69,29 @@ const useGameLoop = ({
     const killer = allPlayers.find(p => p.id === killerId);
 
     if (!victim || !killer || !victim.isAlive) return;
-
-    // The core fix: check for friendly fire BEFORE applying damage.
-    // A player cannot hit themselves, and players on the same team cannot hit each other.
-    if (victim.id === killer.id || victim.team === killer.team) {
-        return; // This is friendly fire or a self-hit, so we do nothing.
-    }
+    if (victim.id === killer.id || victim.team === killer.team) return;
 
     victim.health -= damage;
-
     if (victim.health <= 0) {
-        victim.health = 0;
-        victim.isAlive = false;
-        
-        killer.kills += 1;
-        if (killer.team === 'red') {
-            setGameState(prev => ({ ...prev, teamScores: { ...prev.teamScores, red: prev.teamScores.red + 1 } }));
-        } else if (killer.team === 'blue') {
-            setGameState(prev => ({ ...prev, teamScores: { ...prev.teamScores, blue: prev.teamScores.blue + 1 } }));
+      victim.health = 0;
+      victim.isAlive = false;
+      
+      killer.kills += 1; // Award kill point for upgrades
+      if (killer.team === 'red') setGameState(prev => ({ ...prev, teamScores: { ...prev.teamScores, red: prev.teamScores.red + 1 } }));
+      else if (killer.team === 'blue') setGameState(prev => ({ ...prev, teamScores: { ...prev.teamScores, blue: prev.teamScores.blue + 1 } }));
+      
+      const respawnTimer = setTimeout(() => {
+        victim.health = victim.maxHealth;
+        victim.isAlive = true;
+        if (canvasRef.current) {
+          victim.x = Math.random() * canvasRef.current.width;
+          victim.y = Math.random() * canvasRef.current.height;
+          victim.targetX = victim.x;
+          victim.targetY = victim.y;
         }
-        
-        const respawnTimer = setTimeout(() => {
-            victim.health = victim.maxHealth;
-            victim.isAlive = true;
-            if (canvasRef.current) {
-                victim.x = Math.random() * canvasRef.current.width;
-                victim.y = Math.random() * canvasRef.current.height;
-                victim.targetX = victim.x;
-                victim.targetY = victim.y;
-            }
-            respawnTimeouts.current.delete(victimId);
-        }, 3000);
-        respawnTimeouts.current.set(victimId, respawnTimer);
+        respawnTimeouts.current.delete(victimId);
+      }, 3000);
+      respawnTimeouts.current.set(victimId, respawnTimer);
     }
   }, [isHost, setGameState, canvasRef]);
   
@@ -113,15 +101,12 @@ const useGameLoop = ({
     for (let i = bullets.length - 1; i >= 0; i--) {
       const bullet = bullets[i];
       for (const p of allPlayers) {
-        // Safer check: Explicitly prevent self-hits AND friendly fire.
-        // The bullet.team check ensures we don't evaluate when team data is missing.
         if (p.id !== bullet.playerId && p.team !== bullet.team && p.isAlive && bullet.team) {
           const dist = Math.hypot(bullet.x - p.x, bullet.y - p.y);
           if (dist < p.size + bullet.size) {
-            // Report potential hit. Host will validate it in processHit.
             if (isHost) {
               processHit(p.id, bullet.playerId, bullet.damage || 10);
-            } else if (playerId === bullet.playerId) { // Client-side prediction for own shots
+            } else if (playerId === bullet.playerId) {
               channel?.send({
                 type: 'broadcast', event: 'player-hit',
                 payload: { victimId: p.id, killerId: bullet.playerId, damage: bullet.damage || 10 }
@@ -134,10 +119,6 @@ const useGameLoop = ({
       }
     }
   }, [isHost, channel, processHit, playerId]);
-
-  // =================================================================
-  // END OF FIX
-  // =================================================================
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => { gameDataRef.current.keys[e.key.toLowerCase()] = true; };
@@ -157,20 +138,14 @@ const useGameLoop = ({
           canvasRef.current.height = window.innerHeight;
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    window.addEventListener('mousedown', handleMouseDown);
-    window.addEventListener('mouseup', handleMouseUp);
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('resize', handleResize);
+    window.addEventListener('keydown', handleKeyDown); window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('mousedown', handleMouseDown); window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('mousemove', handleMouseMove); window.addEventListener('resize', handleResize);
     handleResize();
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-      window.removeEventListener('mousedown', handleMouseDown);
-      window.removeEventListener('mouseup', handleMouseUp);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('mousedown', handleMouseDown); window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('mousemove', handleMouseMove); window.removeEventListener('resize', handleResize);
     };
   }, [canvasRef]);
 
@@ -195,11 +170,10 @@ const useGameLoop = ({
             newOtherPlayers.push(existingPlayer);
           } else {
             newOtherPlayers.push({
-              id: pState.user_id, x: pState.x || 0, y: pState.y || 0,
-              targetX: pState.x || 0, targetY: pState.y || 0,
-              health: pState.health || 100, maxHealth: 100,
-              isAlive: pState.isAlive !== false, team: pState.team, 
+              id: pState.user_id, x: pState.x || 0, y: pState.y || 0, targetX: pState.x || 0, targetY: pState.y || 0,
+              health: pState.health || 100, maxHealth: 100, isAlive: pState.isAlive !== false, team: pState.team, 
               role: pState.role, size: 20, kills: pState.kills || 0,
+              gunLevel: pState.gunLevel || 1, fireRateLevel: pState.fireRateLevel || 1, bulletSizeLevel: pState.bulletSizeLevel || 1,
             });
           }
         }
@@ -210,7 +184,6 @@ const useGameLoop = ({
     const handleGameStateUpdate = (payload: { payload: { enemies: Enemy[], players: Player[], timeLeft: number, teamScores: { red: number, blue: number } } }) => {
         if (!isHost) {
             gameDataRef.current.enemies = payload.payload.enemies;
-
             payload.payload.players.forEach(networkPlayer => {
                 if (networkPlayer.id === playerId) {
                     const self = gameDataRef.current.player;
@@ -218,13 +191,19 @@ const useGameLoop = ({
                     if (self.isAlive && !networkPlayer.isAlive) setIsSpectating(true);
                     if (!self.isAlive && networkPlayer.isAlive) {
                       setIsSpectating(false);
-                      self.x = networkPlayer.x;
-                      self.y = networkPlayer.y;
-                      self.targetX = networkPlayer.targetX;
-                      self.targetY = networkPlayer.targetY;
+                      self.x = networkPlayer.x; self.y = networkPlayer.y;
+                      self.targetX = networkPlayer.targetX; self.targetY = networkPlayer.targetY;
                     }
                     self.isAlive = networkPlayer.isAlive;
                     self.kills = networkPlayer.kills;
+                    self.gunLevel = networkPlayer.gunLevel;
+                    self.fireRateLevel = networkPlayer.fireRateLevel;
+                    self.bulletSizeLevel = networkPlayer.bulletSizeLevel;
+
+                    setGameState(prev => ({ ...prev, 
+                        kills: self.kills, gunLevel: self.gunLevel, 
+                        fireRateLevel: self.fireRateLevel, bulletSizeLevel: self.bulletSizeLevel
+                    }));
                 } else {
                     let otherPlayer = gameDataRef.current.otherPlayers.find(p => p.id === networkPlayer.id);
                     if (!otherPlayer) {
@@ -234,11 +213,12 @@ const useGameLoop = ({
                         otherPlayer.health = networkPlayer.health;
                         otherPlayer.isAlive = networkPlayer.isAlive;
                         otherPlayer.kills = networkPlayer.kills;
-                        if (!otherPlayer.isAlive && networkPlayer.isAlive) { 
-                           otherPlayer.x = networkPlayer.x;
-                           otherPlayer.y = networkPlayer.y;
-                           otherPlayer.targetX = networkPlayer.targetX;
-                           otherPlayer.targetY = networkPlayer.targetY;
+                        otherPlayer.gunLevel = networkPlayer.gunLevel;
+                        otherPlayer.fireRateLevel = networkPlayer.fireRateLevel;
+                        otherPlayer.bulletSizeLevel = networkPlayer.bulletSizeLevel;
+                        if (!otherPlayer.isAlive && networkPlayer.isAlive) {
+                           otherPlayer.x = networkPlayer.x; otherPlayer.y = networkPlayer.y;
+                           otherPlayer.targetX = networkPlayer.targetX; otherPlayer.targetY = networkPlayer.targetY;
                         }
                     }
                 }
@@ -263,9 +243,29 @@ const useGameLoop = ({
         }
     };
     
-    const handleUpgradePurchase = (payload: { payload: { upgradeType: string, cost: number }}) => {
-        if (!isHost) {
-            setGameState(prev => ({...prev, timeLeft: prev.timeLeft - payload.payload.cost, [`${payload.payload.upgradeType}Level`]: prev[`${payload.payload.upgradeType}Level`] + 1 }));
+    const handleUpgradePurchase = (payload: { payload: { upgradeType: string }, [key: string]: any }) => {
+        if (isHost) {
+            const pId = payload.user_id; // Supabase adds user_id to the broadcast payload
+            const p = [gameDataRef.current.player, ...gameDataRef.current.otherPlayers].find(p => p.id === pId);
+            if (!p) return;
+
+            const { upgradeType } = payload.payload;
+            let cost = 0, currentLevel = 0;
+            let levelKey: 'gunLevel' | 'fireRateLevel' | 'bulletSizeLevel' = 'gunLevel';
+            const costs = {
+                gun: [0, 2, 4, 6, 8, 10, 12, 15, 18, 22, 25],
+                fireRate: [0, 1, 3, 5, 7, 9, 11, 14, 17, 20, 24],
+                bulletSize: [0, 3, 5, 7, 9, 11, 13, 16, 19, 23, 26],
+            };
+            
+            if (upgradeType === 'gun') { currentLevel = p.gunLevel; cost = costs.gun[currentLevel] || 9999; levelKey = 'gunLevel'; }
+            else if (upgradeType === 'fireRate') { currentLevel = p.fireRateLevel; cost = costs.fireRate[currentLevel] || 9999; levelKey = 'fireRateLevel'; }
+            else { currentLevel = p.bulletSizeLevel; cost = costs.bulletSize[currentLevel] || 9999; levelKey = 'bulletSizeLevel'; }
+
+            if (p.kills >= cost && currentLevel < 10) {
+                p.kills -= cost;
+                p[levelKey]++;
+            }
         }
     };
 
@@ -300,7 +300,7 @@ const useGameLoop = ({
     const { player, otherPlayers, mouse } = gameDataRef.current;
     
     if (mouse.isDown && player.isAlive) {
-        shoot(gameDataRef.current, gameState, channel, isMultiplayer);
+        shoot(gameDataRef.current, player, channel, isMultiplayer);
     }
 
     if (player.isAlive) {
@@ -323,43 +323,38 @@ const useGameLoop = ({
     if (isHost || !isMultiplayer) {
       const newTimeLeft = gameState.timeLeft - deltaTime;
       if (newTimeLeft <= 0) {
-        const finalScore = gameSettings.gameMode === 'team-vs-team' ? Math.max(gameState.teamScores.red, gameState.teamScores.blue) : player.kills;
-        onGameEnd(finalScore);
+        onGameEnd(gameSettings.gameMode === 'team-vs-team' ? Math.max(gameState.teamScores.red, gameState.teamScores.blue) : gameState.kills);
         if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
         return;
       }
       setGameState(prev => ({ ...prev, timeLeft: newTimeLeft }));
 
-      if (gameSettings.gameMode !== 'team-vs-team') {
-        updateEnemies(gameDataRef.current);
-        const allCurrentPlayers = [player, ...otherPlayers];
-        const timeGained = checkBulletEnemyCollisions(gameDataRef.current, setGameState, allCurrentPlayers);
-        checkPlayerEnemyCollisions(gameDataRef.current, setGameState, allCurrentPlayers);
-        if (timeGained > 0) {
-            setGameState(prev => ({...prev, timeLeft: prev.timeLeft + timeGained}));
-        }
-        spawnEnemy(gameDataRef.current, canvas, setGameState, gameSettings);
-        spawnBoss(gameDataRef.current, canvas, setGameState);
+      // Add enemy logic to all modes now
+      updateEnemies(gameDataRef.current);
+      const allCurrentPlayers = [player, ...otherPlayers];
+      const isPvp = gameSettings.gameMode === 'team-vs-team';
+      const timeGained = checkBulletEnemyCollisions(gameDataRef.current, allCurrentPlayers, isPvp);
+      checkPlayerEnemyCollisions(gameDataRef.current, allCurrentPlayers);
+      if (!isPvp && timeGained > 0) {
+          setGameState(prev => ({...prev, timeLeft: prev.timeLeft + timeGained}));
       }
+      spawnEnemy(gameDataRef.current, canvas, gameSettings);
+      spawnBoss(gameDataRef.current, canvas);
     }
     
     if (isMultiplayer && channel && playerId) {
-        const positionBroadcastInterval = 50;
-        if (now - lastPositionBroadcast.current > positionBroadcastInterval && player.isAlive) {
+        if (now - lastPositionBroadcast.current > 50 && player.isAlive) {
             lastPositionBroadcast.current = now;
             channel.send({ type: 'broadcast', event: 'player-move', payload: { id: playerId, x: player.x, y: player.y }});
         }
-
-        const stateBroadcastInterval = 100;
-        if (isHost && now - lastStateBroadcast.current > stateBroadcastInterval) {
+        if (isHost && now - lastStateBroadcast.current > 100) {
             lastStateBroadcast.current = now;
             channel.send({
                 type: 'broadcast', event: 'game-state-update',
                 payload: {
                     enemies: gameDataRef.current.enemies,
                     players: [gameDataRef.current.player, ...gameDataRef.current.otherPlayers],
-                    timeLeft: gameState.timeLeft,
-                    teamScores: gameState.teamScores,
+                    timeLeft: gameState.timeLeft, teamScores: gameState.teamScores,
                 }
             });
         }
@@ -377,13 +372,13 @@ const useGameLoop = ({
     if (isMultiplayer && channel && playerId) {
       channel.track({
         user_id: playerId, x: gameDataRef.current.player.x, y: gameDataRef.current.player.y,
-        team: gameDataRef.current.player.team, health: 100,
-        isAlive: true, role: isHost ? 'host' : 'player', kills: 0,
+        team: gameDataRef.current.player.team, health: 100, isAlive: true, 
+        role: isHost ? 'host' : 'player', kills: 0,
+        gunLevel: 1, fireRateLevel: 1, bulletSizeLevel: 1,
       });
     }
     
     animationFrameId.current = requestAnimationFrame(gameLoop);
-
     return () => {
       if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
     };
