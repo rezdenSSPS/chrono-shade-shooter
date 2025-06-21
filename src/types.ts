@@ -13,6 +13,10 @@ export interface Player {
   kills: number;
   team?: 'red' | 'blue';
   role?: 'host' | 'player';
+  // Player-specific upgrade levels
+  gunLevel: number;
+  fireRateLevel: number;
+  bulletSizeLevel: number;
 }
 
 export interface Bullet {
@@ -56,9 +60,11 @@ export interface GameData {
 
 export interface GameUIState {
   timeLeft: number;
+  // These now represent the LOCAL player's state for the UI
   gunLevel: number;
   fireRateLevel: number;
   bulletSizeLevel: number;
+  kills: number; // For displaying local player's kills/currency
   enemiesKilled: number;
   bossActive: boolean;
   gameStartTime: number;
