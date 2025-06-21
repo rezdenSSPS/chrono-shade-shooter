@@ -5,6 +5,8 @@ import { Button } from './ui/button';
 import useGameLoop from '@/hooks/useGameLoop';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import type { GameSettings } from '@/types';
+// UPDATE: Import from centralized config
+import { UPGRADE_COSTS, GUN_NAMES } from '@/gameConfig';
 
 interface GameCanvasProps {
   onGameEnd: (score: number) => void;
@@ -14,6 +16,7 @@ interface GameCanvasProps {
   gameSettings: GameSettings;
   channel?: RealtimeChannel;
   playerId?: string;
+  playerTeam?: 'red' | 'blue' | 'solo'; // UPDATE: Added playerTeam prop
 }
 
 const GameCanvas = ({ 
@@ -23,7 +26,8 @@ const GameCanvas = ({
     lobbyCode, 
     gameSettings,
     channel,
-    playerId
+    playerId,
+    playerTeam, // UPDATE: Destructure playerTeam
 }: GameCanvasProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isSpectating, setIsSpectating] = useState(false);
@@ -51,23 +55,22 @@ const GameCanvas = ({
     gameSettings,
     channel,
     playerId,
+    playerTeam, // UPDATE: Pass playerTeam to the game loop
     setIsSpectating,
   });
   
   // --- Upgrade Logic ---
+  // UPDATE: Using centralized config for costs
   const getGunUpgradeCost = () => {
-    const costs = [0, 2, 4, 6, 8, 10, 12, 15, 18, 22, 25]; // Kills for PvP, Time for PvE
-    return costs[gameState.gunLevel] || 9999;
+    return UPGRADE_COSTS.gun[gameState.gunLevel] || 9999;
   };
 
   const getFireRateUpgradeCost = () => {
-    const costs = [0, 1, 3, 5, 7, 9, 11, 14, 17, 20, 24];
-    return costs[gameState.fireRateLevel] || 9999;
+    return UPGRADE_COSTS.fireRate[gameState.fireRateLevel] || 9999;
   };
 
   const getBulletSizeUpgradeCost = () => {
-    const costs = [0, 3, 5, 7, 9, 11, 13, 16, 19, 23, 26];
-    return costs[gameState.bulletSizeLevel] || 9999;
+    return UPGRADE_COSTS.bulletSize[gameState.bulletSizeLevel] || 9999;
   };
 
   const purchaseUpgrade = (upgradeType: 'gun' | 'fireRate' | 'bulletSize') => {
@@ -128,8 +131,8 @@ const GameCanvas = ({
     const cost = costs[type]();
     let name = '';
     if (type === 'gun') {
-        const gunNames = ['Pistol', 'Shotgun', 'SMG', 'Rifle', 'LMG', 'Plasma', 'Laser', 'Rail Gun', 'Ion Cannon', 'Annihilator'];
-        name = gunNames[levels.gun] || 'Ultimate';
+        // UPDATE: Use centralized config for names
+        name = GUN_NAMES[levels.gun] || 'Ultimate';
     } else if (type === 'fireRate') {
         name = `Fire Rate Lv${levels.fireRate + 1}`;
     } else {
