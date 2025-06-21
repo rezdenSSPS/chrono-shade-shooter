@@ -1,78 +1,61 @@
-import type { GameData, Player } from "@/types";
+// src/utils/gameRenderer.ts
 
-const drawPlayer = (ctx: CanvasRenderingContext2D, player: Player, isLocalPlayer: boolean) => {
-    if (!player.isAlive) return;
+import type { GameData, Player } from '@/types';
 
-    // Team color outline
-    ctx.strokeStyle = player.team === 'red' ? '#ff6666' : '#6666ff';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.arc(player.x, player.y, player.size, 0, Math.PI * 2);
-    ctx.stroke();
+const drawPlayer = (ctx: CanvasRenderingContext2D, player: Player) => {
+  if (!player.isAlive) return;
 
-    // Player body
-    ctx.fillStyle = isLocalPlayer ? '#00c2c7' : '#dddddd'; // Cyan for local, white for others
-    ctx.beginPath();
-    ctx.arc(player.x, player.y, player.size, 0, Math.PI * 2);
-    ctx.fill();
+  // Main body
+  ctx.fillStyle = player.team === 'red' ? '#E53E3E' : '#3B82F6';
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, player.size, 0, Math.PI * 2);
+  ctx.fill();
 
-    // Health bar
-    const healthBarWidth = 40;
+  // Health bar
+  if (player.health < player.maxHealth) {
+    const healthBarWidth = player.size * 2;
     const healthBarHeight = 5;
-    const healthPercentage = player.health / player.maxHealth;
-    
-    // Background
-    ctx.fillStyle = '#ff4d4d';
-    ctx.fillRect(player.x - healthBarWidth / 2, player.y - player.size - 15, healthBarWidth, healthBarHeight);
+    const healthBarX = player.x - player.size;
+    const healthBarY = player.y + player.size + 5;
 
-    // Foreground
-    ctx.fillStyle = '#4dff4d';
-    ctx.fillRect(player.x - healthBarWidth / 2, player.y - player.size - 15, healthBarWidth * healthPercentage, healthBarHeight);
+    ctx.fillStyle = '#4A5568'; // Background
+    ctx.fillRect(healthBarX, healthBarY, healthBarWidth, healthBarHeight);
 
-    // "YOU" indicator for local player
-    if (isLocalPlayer) {
-        ctx.fillStyle = 'white';
-        ctx.font = 'bold 12px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('YOU', player.x, player.y - player.size - 25);
-    }
+    ctx.fillStyle = '#48BB78'; // Health
+    const healthWidth = (player.health / player.maxHealth) * healthBarWidth;
+    ctx.fillRect(healthBarX, healthBarY, healthWidth, healthBarHeight);
+  }
 };
 
+export const renderGame = (canvas: HTMLCanvasElement, gameData: GameData, localPlayerId?: string) => {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
 
-export const renderGame = (canvas: HTMLCanvasElement, gameData: GameData) => {
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // Draw background (optional)
+  ctx.fillStyle = '#1A202C';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Draw enemies
-    gameData.enemies.forEach(enemy => {
-        ctx.fillStyle = enemy.color;
-        ctx.beginPath();
-        ctx.arc(enemy.x, enemy.y, enemy.size, 0, Math.PI * 2);
-        ctx.fill();
-    });
+  // Draw enemies
+  gameData.enemies.forEach(enemy => {
+    ctx.fillStyle = `rgb(${enemy.colorValue}, 0, 0)`;
+    ctx.beginPath();
+    ctx.arc(enemy.x, enemy.y, enemy.size, 0, Math.PI * 2);
+    ctx.fill();
+  });
 
-    // Draw bullets
-    gameData.bullets.forEach(bullet => {
-        ctx.fillStyle = bullet.team === 'red' ? '#ff8080' : '#8080ff';
-        ctx.beginPath();
-        ctx.arc(bullet.x, bullet.y, bullet.size, 0, Math.PI * 2);
-        ctx.fill();
-    });
+  // Draw local player
+  drawPlayer(ctx, gameData.player);
 
-    // Draw other players
-    gameData.otherPlayers.forEach(player => drawPlayer(ctx, player, false));
+  // Draw other players
+  gameData.otherPlayers.forEach(p => drawPlayer(ctx, p));
 
-    // Draw local player on top
-    drawPlayer(ctx, gameData.player, true);
-
-    // Draw cursor
-    if (gameData.player.isAlive) {
-        ctx.strokeStyle = '#ff0000';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(gameData.mouse.x, gameData.mouse.y, 10, 0, Math.PI * 2);
-        ctx.stroke();
-    }
+  // Draw bullets
+  gameData.bullets.forEach(bullet => {
+    ctx.fillStyle = bullet.team === 'red' ? '#F56565' : '#63B3ED';
+    ctx.beginPath();
+    ctx.arc(bullet.x, bullet.y, bullet.size, 0, Math.PI * 2);
+    ctx.fill();
+  });
 };
