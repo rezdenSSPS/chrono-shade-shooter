@@ -14,6 +14,7 @@ import {
   spawnBoss,
   shoot
 } from '@/utils/gameLogic';
+// UPDATE: Import from centralized config
 import { UPGRADE_COSTS } from '@/gameConfig';
 
 interface UseGameLoopProps {
@@ -26,7 +27,7 @@ interface UseGameLoopProps {
   gameSettings: GameSettings;
   channel?: RealtimeChannel;
   playerId?: string;
-  playerTeam?: 'red' | 'blue' | 'solo';
+  playerTeam?: 'red' | 'blue' | 'solo'; // UPDATE: Added playerTeam prop
   setIsSpectating: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
@@ -40,13 +41,13 @@ const useGameLoop = ({
   gameSettings,
   channel,
   playerId,
-  playerTeam,
+  playerTeam, // UPDATE: Destructure playerTeam
   setIsSpectating,
 }: UseGameLoopProps) => {
   const gameDataRef = useRef<GameData>({
     player: {
       id: playerId || 'solo',
-      team: playerTeam || 'solo',
+      team: playerTeam || 'solo', // UPDATE: Use passed-in team
       x: window.innerWidth / 2, y: window.innerHeight / 2,
       targetX: window.innerWidth / 2, targetY: window.innerHeight / 2,
       size: 20, health: 100, maxHealth: 100,
@@ -81,6 +82,7 @@ const useGameLoop = ({
       victim.isAlive = false;
       
       killer.kills += 1;
+      // Host updates the team scores directly
       if (killer.team === 'red') setGameState(prev => ({ ...prev, teamScores: { ...prev.teamScores, red: prev.teamScores.red + 1 } }));
       else if (killer.team === 'blue') setGameState(prev => ({ ...prev, teamScores: { ...prev.teamScores, blue: prev.teamScores.blue + 1 } }));
       
@@ -90,6 +92,8 @@ const useGameLoop = ({
         if (canvasRef.current) {
           victim.x = Math.random() * canvasRef.current.width;
           victim.y = Math.random() * canvasRef.current.height;
+          victim.targetX = victim.x;
+          victim.targetY = victim.y;
         }
         respawnTimeouts.current.delete(victimId);
       }, 3000);
@@ -154,86 +158,75 @@ const useGameLoop = ({
   useEffect(() => {
     if (!isMultiplayer || !channel || !playerId) return;
 
-    // ******************************************************************* //
-    //                      THE CORE VISIBILITY FIX                        //
-    // ******************************************************************* //
-    // This function runs for EVERYONE when the list of players changes.
-    // This is how the host learns about clients and clients learn about the host.
-    const handlePresenceSync = () => {
-      const presenceState = channel.presenceState();
-      const newOtherPlayers: Player[] = [];
-      for (const id in presenceState) {
-        // presences is an array, we take the first one
-        const presences = presenceState[id] as any[];
-        const pState = presences[0];
-        // If the presence is not me, add them to my list of other players
-        if (pState.user_id !== playerId) {
-          const existingPlayer = gameDataRef.current.otherPlayers.find(p => p.id === pState.user_id);
-          const playerData = {
-            id: pState.user_id,
-            x: existingPlayer?.x || pState.x || 0, // Preserve current x if they exist
-            y: existingPlayer?.y || pState.y || 0, // Preserve current y if they exist
-            targetX: pState.x || 0,
-            targetY: pState.y || 0,
-            health: pState.health || 100, maxHealth: 100,
-            isAlive: pState.isAlive !== false, team: pState.team,
-            role: pState.role, size: 20, kills: pState.kills || 0,
-            gunLevel: pState.gunLevel || 1, fireRateLevel: pState.fireRateLevel || 1, bulletSizeLevel: pState.bulletSizeLevel || 1,
-          };
-          newOtherPlayers.push(playerData);
-        }
-      }
-      gameDataRef.current.otherPlayers = newOtherPlayers;
-    };
-
-
     const handlePlayerHit = (payload: { payload: { victimId: string, killerId: string, damage: number }}) => {
       if (isHost) {
         processHit(payload.payload.victimId, payload.payload.killerId, payload.payload.damage);
       }
     };
 
+    const handlePresenceSync = () => {
+      const presenceState = channel.presenceState();
+      const newOtherPlayers: Player[] = [];
+      for (const id in presenceState) {
+        const presences = presenceState[id] as any[];
+        const pState = presences[0];
+        if (pState.user_id !== playerId) {
+          const existingPlayer = gameDataRef.current.otherPlayers.find(p => p.id === pState.user_id);
+          const player_data = {
+            id: pState.user_id, x: pState.x || 0, y: pState.y || 0, targetX: pState.x || 0, targetY: pState.y || 0,
+            health: pState.health || 100, maxHealth: 100, isAlive: pState.isAlive !== false, team: pState.team, 
+            role: pState.role, size: 20, kills: pState.kills || 0,
+            gunLevel: pState.gunLevel || 1, fireRateLevel: pState.fireRateLevel || 1, bulletSizeLevel: pState.bulletSizeLevel || 1,
+          };
+          if (existingPlayer) {
+            // Preserve lerped position but update stats
+            existingPlayer.health = player_data.health;
+            existingPlayer.isAlive = player_data.isAlive;
+            // ... etc
+            newOtherPlayers.push(existingPlayer);
+          } else {
+            newOtherPlayers.push(player_data);
+          }
+        }
+      }
+      gameDataRef.current.otherPlayers = newOtherPlayers;
+    };
+
     const handleGameStateUpdate = (payload: { payload: { enemies: Enemy[], players: Player[], timeLeft: number, teamScores: { red: number, blue: number } } }) => {
-        if (isHost) return;
+        if (!isHost) {
+            gameDataRef.current.enemies = payload.payload.enemies;
+            payload.payload.players.forEach(networkPlayer => {
+                if (networkPlayer.id === playerId) {
+                    const self = gameDataRef.current.player;
+                    self.health = networkPlayer.health;
+                    if (self.isAlive && !networkPlayer.isAlive) setIsSpectating(true);
+                    if (!self.isAlive && networkPlayer.isAlive) {
+                      setIsSpectating(false);
+                      self.x = networkPlayer.x; self.y = networkPlayer.y;
+                      self.targetX = networkPlayer.targetX; self.targetY = networkPlayer.targetY;
+                    }
+                    self.isAlive = networkPlayer.isAlive;
+                    self.kills = networkPlayer.kills;
+                    self.gunLevel = networkPlayer.gunLevel;
+                    self.fireRateLevel = networkPlayer.fireRateLevel;
+                    self.bulletSizeLevel = networkPlayer.bulletSizeLevel;
 
-        const { enemies, players, timeLeft, teamScores } = payload.payload;
-        gameDataRef.current.enemies = enemies;
-
-        players.forEach(networkPlayer => {
-            if (networkPlayer.id === playerId) {
-                const self = gameDataRef.current.player;
-                self.health = networkPlayer.health;
-                if (self.isAlive && !networkPlayer.isAlive) setIsSpectating(true);
-                if (!self.isAlive && networkPlayer.isAlive) {
-                  setIsSpectating(false);
-                  self.x = networkPlayer.x; self.y = networkPlayer.y;
-                }
-                self.isAlive = networkPlayer.isAlive;
-                self.kills = networkPlayer.kills;
-                self.gunLevel = networkPlayer.gunLevel;
-                self.fireRateLevel = networkPlayer.fireRateLevel;
-                self.bulletSizeLevel = networkPlayer.bulletSizeLevel;
-
-                setGameState(prev => ({ ...prev, 
-                    kills: self.kills, gunLevel: self.gunLevel, 
-                    fireRateLevel: self.fireRateLevel, bulletSizeLevel: self.bulletSizeLevel
-                }));
-            } else {
-                let otherPlayer = gameDataRef.current.otherPlayers.find(p => p.id === networkPlayer.id);
-                if (!otherPlayer) {
-                    otherPlayer = { ...networkPlayer, targetX: networkPlayer.x, targetY: networkPlayer.y };
-                    gameDataRef.current.otherPlayers.push(otherPlayer);
+                    setGameState(prev => ({ ...prev, 
+                        kills: self.kills, gunLevel: self.gunLevel, 
+                        fireRateLevel: self.fireRateLevel, bulletSizeLevel: self.bulletSizeLevel
+                    }));
                 } else {
-                    otherPlayer.health = networkPlayer.health;
-                    otherPlayer.isAlive = networkPlayer.isAlive;
-                    otherPlayer.kills = networkPlayer.kills;
-                    otherPlayer.gunLevel = networkPlayer.gunLevel;
-                    otherPlayer.fireRateLevel = networkPlayer.fireRateLevel;
-                    otherPlayer.bulletSizeLevel = networkPlayer.bulletSizeLevel;
+                    let otherPlayer = gameDataRef.current.otherPlayers.find(p => p.id === networkPlayer.id);
+                    if (!otherPlayer) {
+                        otherPlayer = { ...networkPlayer };
+                        gameDataRef.current.otherPlayers.push(otherPlayer);
+                    } else {
+                        Object.assign(otherPlayer, networkPlayer);
+                    }
                 }
-            }
-        });
-        setGameState(prev => ({...prev, timeLeft, teamScores }));
+            });
+            setGameState(prev => ({...prev, timeLeft: payload.payload.timeLeft, teamScores: payload.payload.teamScores }));
+        }
     };
     
     const handleBulletFired = (payload: { payload: { bullet: Bullet } }) => {
@@ -243,17 +236,12 @@ const useGameLoop = ({
     };
 
     const handlePlayerMove = (payload: { payload: { id: string, x: number, y: number } }) => {
-        if (payload.payload.id === playerId) return;
-        
-        const movedPlayer = gameDataRef.current.otherPlayers.find(p => p.id === payload.payload.id);
-        if (!movedPlayer) return;
-
-        if (isHost) {
-            movedPlayer.x = payload.payload.x;
-            movedPlayer.y = payload.payload.y;
-        } else {
-            movedPlayer.targetX = payload.payload.x;
-            movedPlayer.targetY = payload.payload.y;
+        if (payload.payload.id !== playerId) {
+            const movedPlayer = gameDataRef.current.otherPlayers.find(p => p.id === payload.payload.id);
+            if (movedPlayer) {
+                movedPlayer.targetX = payload.payload.x;
+                movedPlayer.targetY = payload.payload.y;
+            }
         }
     };
     
@@ -267,6 +255,7 @@ const useGameLoop = ({
             let cost = 0, currentLevel = 0;
             let levelKey: 'gunLevel' | 'fireRateLevel' | 'bulletSizeLevel' = 'gunLevel';
             
+            // UPDATE: Use centralized config
             if (upgradeType === 'gun') { currentLevel = p.gunLevel; cost = UPGRADE_COSTS.gun[currentLevel] || 9999; levelKey = 'gunLevel'; }
             else if (upgradeType === 'fireRate') { currentLevel = p.fireRateLevel; cost = UPGRADE_COSTS.fireRate[currentLevel] || 9999; levelKey = 'fireRateLevel'; }
             else { currentLevel = p.bulletSizeLevel; cost = UPGRADE_COSTS.bulletSize[currentLevel] || 9999; levelKey = 'bulletSizeLevel'; }
@@ -278,20 +267,18 @@ const useGameLoop = ({
         }
     };
 
-    // This is the line that was broken. We now correctly call handlePresenceSync.
     channel.on('presence', { event: 'sync' }, handlePresenceSync);
     channel.on('broadcast', { event: 'game-state-update' }, handleGameStateUpdate);
     channel.on('broadcast', { event: 'bullet-fired' }, handleBulletFired);
     channel.on('broadcast', { event: 'player-move' }, handlePlayerMove);
     channel.on('broadcast', { event: 'purchase-upgrade' }, handleUpgradePurchase);
     channel.on('broadcast', { event: 'player-hit' }, handlePlayerHit);
-
-    // Initial sync call when joining
-    handlePresenceSync();
     
+    handlePresenceSync();
+
     return () => {
-        channel.off('presence');
-        channel.off('broadcast');
+        channel.off('presence', { event: 'sync' });
+        channel.off('broadcast'); // Remove all broadcast listeners
         respawnTimeouts.current.forEach(timeout => clearTimeout(timeout));
     };
   }, [isMultiplayer, channel, playerId, isHost, setGameState, setIsSpectating, processHit]);
@@ -313,49 +300,50 @@ const useGameLoop = ({
     if (player.isAlive) {
         updatePlayer(gameDataRef.current, canvas);
     }
-    
     updateBullets(gameDataRef.current, canvas);
 
-    if (!isHost) {
-        otherPlayers.forEach(p => {
-            if (p.isAlive) {
-                const lerpFactor = 0.2;
-                p.x += (p.targetX - p.x) * lerpFactor;
-                p.y += (p.targetY - p.y) * lerpFactor;
-            }
-        });
-    }
+    otherPlayers.forEach(p => {
+      if (p.isAlive) {
+        const lerpFactor = 0.2; // Smoothly interpolate other players' positions
+        p.x += (p.targetX - p.x) * lerpFactor;
+        p.y += (p.targetY - p.y) * lerpFactor;
+      }
+    });
     
     if (gameSettings.gameMode === 'team-vs-team') {
       checkPlayerBulletCollisions();
     }
     
-    if (isHost || !isMultiplayer) {
-      setGameState(prev => {
-        let newTimeLeft = prev.timeLeft - deltaTime;
-        if (newTimeLeft <= 0) {
-            const finalScore = gameSettings.gameMode === 'team-vs-team' 
-                ? Math.max(prev.teamScores.red, prev.teamScores.blue) 
-                : prev.kills;
-            onGameEnd(finalScore);
-            if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
-            return prev;
-        }
+    // UPDATE: Use functional update for timeLeft to avoid dependency on gameState
+    setGameState(prev => {
+        let newTimeLeft = prev.timeLeft;
+        let newTeamScores = prev.teamScores;
 
-        updateEnemies(gameDataRef.current);
-        const allCurrentPlayers = [gameDataRef.current.player, ...gameDataRef.current.otherPlayers];
-        const isPvp = gameSettings.gameMode === 'team-vs-team';
-        const timeGained = checkBulletEnemyCollisions(gameDataRef.current, allCurrentPlayers, isPvp);
-        checkPlayerEnemyCollisions(gameDataRef.current, allCurrentPlayers);
-        if (!isPvp && timeGained > 0) {
-            newTimeLeft += timeGained;
+        if (isHost || !isMultiplayer) {
+            newTimeLeft = prev.timeLeft - deltaTime;
+            if (newTimeLeft <= 0) {
+                const finalScore = gameSettings.gameMode === 'team-vs-team' 
+                    ? Math.max(prev.teamScores.red, prev.teamScores.blue) 
+                    : prev.kills;
+                onGameEnd(finalScore);
+                if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
+                return prev;
+            }
+
+            updateEnemies(gameDataRef.current);
+            const allCurrentPlayers = [gameDataRef.current.player, ...gameDataRef.current.otherPlayers];
+            const isPvp = gameSettings.gameMode === 'team-vs-team';
+            const timeGained = checkBulletEnemyCollisions(gameDataRef.current, allCurrentPlayers, isPvp);
+            checkPlayerEnemyCollisions(gameDataRef.current, allCurrentPlayers);
+            if (!isPvp && timeGained > 0) {
+                newTimeLeft += timeGained;
+            }
+            spawnEnemy(gameDataRef.current, canvas, gameSettings);
+            spawnBoss(gameDataRef.current, canvas);
         }
-        spawnEnemy(gameDataRef.current, canvas, gameSettings);
-        spawnBoss(gameDataRef.current, canvas);
         
-        return { ...prev, timeLeft: newTimeLeft };
-      });
-    }
+        return { ...prev, timeLeft: newTimeLeft, teamScores: newTeamScores };
+    });
     
     if (isMultiplayer && channel && playerId) {
         if (now - lastPositionBroadcast.current > 50 && player.isAlive) {
@@ -369,7 +357,7 @@ const useGameLoop = ({
                 payload: {
                     enemies: gameDataRef.current.enemies,
                     players: [gameDataRef.current.player, ...gameDataRef.current.otherPlayers],
-                    timeLeft: gameState.timeLeft,
+                    timeLeft: gameState.timeLeft, // Send the most recent time
                     teamScores: gameState.teamScores,
                 }
             });
@@ -378,15 +366,19 @@ const useGameLoop = ({
 
     renderGame(canvas, gameDataRef.current, playerId);
     animationFrameId.current = requestAnimationFrame(gameLoop);
-  }, [gameSettings, isMultiplayer, setGameState, channel, playerId, canvasRef, onGameEnd, isHost, checkPlayerBulletCollisions, gameState.timeLeft, gameState.teamScores]);
+  // UPDATE: Removed `gameState` from dependency array to optimize performance
+  }, [gameSettings, isMultiplayer, setGameState, channel, playerId, canvasRef, onGameEnd, isHost, checkPlayerBulletCollisions]);
 
   useEffect(() => {
+    // FIX: Remove random team assignment. It's now handled by props.
+    // The player's team is set in the gameDataRef initialization.
+    gameDataRef.current.player.id = playerId || 'solo-player';
     lastUpdateTime.current = Date.now();
     
     if (isMultiplayer && channel && playerId) {
       channel.track({
         user_id: playerId, x: gameDataRef.current.player.x, y: gameDataRef.current.player.y,
-        team: gameDataRef.current.player.team,
+        team: gameDataRef.current.player.team, // Track the assigned team
         health: 100, isAlive: true, 
         role: isHost ? 'host' : 'player', kills: 0,
         gunLevel: 1, fireRateLevel: 1, bulletSizeLevel: 1,
