@@ -25,15 +25,13 @@ export interface GameUIState {
     teamScores: { red: number; blue: number };
 }
 
-
 // ---- GAME ENTITIES ----
 export interface Player {
   id: string;
   x: number;
   y: number;
-  // ADD THESE TWO LINES FOR INTERPOLATION
-  targetX: number; // The destination X coordinate from the network
-  targetY: number; // The destination Y coordinate from the network
+  targetX: number;
+  targetY: number;
   size: number;
   health: number;
   maxHealth: number;
@@ -71,7 +69,11 @@ export interface GameData {
     enemies: Enemy[];
     bullets: Bullet[];
     keys: { [key: string]: boolean };
-    mouse: { x: number, y: number };
+    mouse: { 
+        x: number, 
+        y: number,
+        isDown: boolean, // ADD THIS LINE
+    };
     lastShot: number;
     lastEnemySpawn: number;
     lastBossSpawn: number;
