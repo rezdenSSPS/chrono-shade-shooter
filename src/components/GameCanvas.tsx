@@ -1,3 +1,5 @@
+// src/components/GameCanvas.tsx
+
 import React, { useRef, useState } from 'react';
 import { Button } from './ui/button';
 import useGameLoop from '@/hooks/useGameLoop';
@@ -71,23 +73,18 @@ const GameCanvas = ({
 
       if (gameState.timeLeft < cost || currentLevel >= 10) return;
 
-      // In multiplayer, only the host can initiate an upgrade purchase.
-      // The host updates its own state and then broadcasts the change to all clients.
       if (isMultiplayer && isHost && channel) {
-            // Host applies change locally for immediate feedback
             setGameState(prev => ({
                 ...prev,
                 timeLeft: prev.timeLeft - cost,
                 [`${upgradeType}Level`]: prev[`${upgradeType}Level`] + 1
             }));
-           // Host broadcasts the change for clients to apply
            channel.send({
                 type: 'broadcast',
                 event: 'purchase-upgrade',
                 payload: { upgradeType, cost }
             });
       } else if (!isMultiplayer) {
-           // Single player logic remains the same
             setGameState(prev => ({
                 ...prev,
                 timeLeft: prev.timeLeft - cost,
@@ -159,13 +156,17 @@ const GameCanvas = ({
       {/* Top UI Bar */}
       <div className="relative z-10 bg-gradient-to-r from-black/80 via-gray-900/80 to-black/80 backdrop-blur-md border-b border-cyan-400/30 p-4">
         <div className="flex items-center justify-between max-w-screen-2xl mx-auto">
-          {/* Upgrades (Left) */}
+          {/* Upgrades (Left) or Red Score */}
           <div className="flex-1 flex justify-start">
-            {showUpgrades && (
+            {showUpgrades ? (
               <div className="flex gap-3">
                 <Button onClick={purchaseGunUpgrade} disabled={!canUpgradeGun || (isMultiplayer && !isHost)} className={`text-xs px-3 py-2 rounded-lg font-bold transition-all ${ canUpgradeGun ? 'bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-400 hover:to-emerald-400 text-black' : 'bg-gray-700/70 text-gray-400 cursor-not-allowed'}`}>🔫 {getGunUpgradeText()}</Button>
                 <Button onClick={purchaseFireRateUpgrade} disabled={!canUpgradeFireRate || (isMultiplayer && !isHost)} className={`text-xs px-3 py-2 rounded-lg font-bold transition-all ${ canUpgradeFireRate ? 'bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white' : 'bg-gray-700/70 text-gray-400 cursor-not-allowed' }`}>⚡ {getFireRateUpgradeText()}</Button>
                 <Button onClick={purchaseBulletSizeUpgrade} disabled={!canUpgradeBulletSize || (isMultiplayer && !isHost)} className={`text-xs px-3 py-2 rounded-lg font-bold transition-all ${ canUpgradeBulletSize ? 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-400 hover:to-pink-400 text-white' : 'bg-gray-700/70 text-gray-400 cursor-not-allowed' }`}>💥 {getBulletSizeUpgradeText()}</Button>
+              </div>
+            ) : (
+              <div className="text-2xl font-bold bg-red-900/50 border-2 border-red-600 px-4 py-1 rounded-lg">
+                <span className="text-red-400">RED: {gameState.teamScores.red}</span>
               </div>
             )}
           </div>
@@ -176,11 +177,17 @@ const GameCanvas = ({
               <div className="bg-gradient-to-r from-yellow-500 to-orange-500 text-black px-6 py-2 rounded-xl border-2 border-yellow-400 shadow-lg"><div className="text-2xl font-bold">⏱️ {displayTime}s</div></div>
             </div>
           </div>
-          {/* Stats (Right) */}
+          {/* Stats (Right) or Blue Score */}
           <div className="flex-1 flex justify-end">
-            <div className="flex items-center gap-6 text-sm">
-                {/* ... existing stats ... */}
-            </div>
+             {showUpgrades ? (
+                <div className="flex items-center gap-6 text-sm">
+                    {/* ... can add stats for PvE here if desired ... */}
+                </div>
+            ) : (
+              <div className="text-2xl font-bold bg-blue-900/50 border-2 border-blue-600 px-4 py-1 rounded-lg">
+                <span className="text-blue-400">BLUE: {gameState.teamScores.blue}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -189,13 +196,12 @@ const GameCanvas = ({
       {isSpectating && (
         <div className="absolute inset-0 z-20 bg-black/70 flex flex-col items-center justify-center">
           <h1 className="text-6xl font-bold text-red-500 animate-pulse">💀 YOU DIED 💀</h1>
-          <p className="text-2xl text-white mt-4">Spectating your team...</p>
+          <p className="text-2xl text-white mt-4">Respawning soon...</p>
         </div>
       )}
 
       {/* Fullscreen Canvas */}
       <canvas ref={canvasRef} className="flex-1 w-full h-full bg-gray-900" style={{ cursor: 'crosshair' }} />
-      {/* ... bottom controls ... */}
     </div>
   );
 };
