@@ -1,7 +1,9 @@
+// src/components/LeaderboardScreen.tsx
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { Button } from './ui/button';
 import { supabase } from '@/integrations/supabase/client';
+import { useQuery, useQueryClient } from '@tanstack/react-query'; // UPDATE: Using react-query
 
 interface LeaderboardScreenProps {
   onBackToMenu: () => void;
@@ -15,24 +17,36 @@ interface LeaderboardEntry {
 }
 
 const LeaderboardScreen = ({ onBackToMenu }: LeaderboardScreenProps) => {
-  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
 
+  // UPDATE: useQuery handles fetching, loading, and error states.
+  const { data: leaderboard = [], isLoading } = useQuery<LeaderboardEntry[]>({
+    queryKey: ['leaderboard'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('leaderboard')
+        .select('*')
+        .order('score', { ascending: false })
+        .limit(10);
+      
+      if (error) {
+        console.error('Error fetching leaderboard:', error);
+        throw new Error('Failed to fetch leaderboard');
+      }
+      return data || [];
+    },
+  });
+
+  // UPDATE: Real-time subscription now invalidates the query,
+  // which triggers a refetch automatically.
   useEffect(() => {
-    fetchLeaderboard();
-    
-    // Set up real-time subscription
     const channel = supabase
       .channel('leaderboard-changes')
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'leaderboard'
-        },
+        { event: '*', schema: 'public', table: 'leaderboard' },
         () => {
-          fetchLeaderboard();
+          queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
         }
       )
       .subscribe();
@@ -40,26 +54,9 @@ const LeaderboardScreen = ({ onBackToMenu }: LeaderboardScreenProps) => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [queryClient]);
 
-  const fetchLeaderboard = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('leaderboard')
-        .select('*')
-        .order('score', { ascending: false })
-        .limit(10);
-
-      if (error) throw error;
-      setLeaderboard(data || []);
-    } catch (error) {
-      console.error('Error fetching leaderboard:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="text-center text-white bg-gradient-to-b from-purple-900 via-blue-900 to-indigo-900 min-h-screen flex flex-col justify-center items-center">
         <h1 className="text-5xl font-bold mb-8 text-cyan-400">🏆 HALL OF HEROES</h1>
@@ -99,7 +96,8 @@ const LeaderboardScreen = ({ onBackToMenu }: LeaderboardScreenProps) => {
                   </div>
                 </div>
                 <div className="text-2xl font-bold">
-                  ⏱️ {entry.score}s
+                  {/* UPDATE: Changed from "s" to "pts" to reflect general score */}
+                  ⏱️ {entry.score} pts 
                 </div>
               </div>
             ))}
