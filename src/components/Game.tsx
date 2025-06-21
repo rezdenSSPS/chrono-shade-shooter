@@ -90,10 +90,11 @@ const Game = () => {
   }, []);
 
   const handleStartGameBroadcast = useCallback((code: string, settings: GameSettings) => {
-    if (gameScreen !== 'multiplayerLobby') return; // Prevent multiple triggers
+    // This guard clause prevents starting the game multiple times on one client
+    if (state.gameScreen !== 'multiplayerLobby') return;
     dispatch({ type: 'UPDATE_SETTINGS', payload: settings });
     dispatch({ type: 'START_MULTIPLAYER_GAME' });
-  }, [gameScreen]);
+  }, [state.gameScreen]);
 
   const setupChannel = useCallback((code: string) => {
     cleanupChannel();
@@ -106,18 +107,15 @@ const Game = () => {
         let redTeamCount = 0;
         let blueTeamCount = 0;
 
-        // Count existing team members
         Object.values(presenceState).flatMap((p: any) => p).forEach((p: any) => {
             if (p.team === 'red') redTeamCount++;
             if (p.team === 'blue') blueTeamCount++;
         });
 
-        // UPDATE: Assign teams deterministically based on join order
         const players = Object.values(presenceState)
           .flatMap((presences: any) => presences)
           .map((p: any): Player => {
             let team = p.team;
-            // Assign team if not present
             if (!team) {
               team = redTeamCount <= blueTeamCount ? 'red' : 'blue';
               if (team === 'red') redTeamCount++;
@@ -126,7 +124,7 @@ const Game = () => {
             return {
               id: p.user_id,
               role: p.role,
-              team: team, // Assign balanced team
+              team: team,
               x: 0, y: 0, size: 20, health: 100, maxHealth: 100, isAlive: true, kills: 0,
             };
           });
@@ -163,7 +161,6 @@ const Game = () => {
     
     channel.subscribe((status) => {
       if (status === 'SUBSCRIBED') {
-        // Team will be assigned by presence sync logic
         channel.track({ user_id: playerIdRef.current, role: 'player' });
       }
     });
@@ -184,13 +181,20 @@ const Game = () => {
 
   const startMultiplayerGame = () => {
     if (isHost && channelRef.current) {
-      // The host's own client will react to this broadcast as well
+      // Send the broadcast to all other clients
       channelRef.current.send({
         type: 'broadcast',
         event: 'start-game',
         payload: { settings: gameSettings }
       });
     }
+    //****************************************************************//
+    //                          THE FIX                               //
+    //****************************************************************//
+    // Directly start the game for the host's client. This is more    //
+    // reliable than waiting for the broadcast to return. The other   //
+    // clients will start when they receive the broadcast.            //
+    dispatch({ type: 'START_MULTIPLAYER_GAME' });
   };
 
   const backToMenu = () => {
@@ -207,7 +211,6 @@ const Game = () => {
     return () => cleanupChannel();
   }, [cleanupChannel]);
   
-  // FIX: Find the current player's data to pass their team to the game
   const currentPlayer = connectedPlayers.find(p => p.id === playerIdRef.current);
 
   return (
@@ -247,7 +250,7 @@ const Game = () => {
           gameSettings={gameSettings}
           channel={channelRef.current}
           playerId={playerIdRef.current}
-          playerTeam={currentPlayer?.team} // Pass the assigned team
+          playerTeam={currentPlayer?.team || (isHost ? 'red' : 'blue')} // Fallback just in case
         />
       )}
       
