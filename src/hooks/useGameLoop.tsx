@@ -60,35 +60,50 @@ const useGameLoop = ({
   const lastStateBroadcast = useRef(0);
   const respawnTimeouts = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
+  // =================================================================
+  // START OF FIX
+  // =================================================================
+
   const processHit = useCallback((victimId: string, killerId: string, damage: number) => {
     if (!isHost) return;
+
     const allPlayers = [gameDataRef.current.player, ...gameDataRef.current.otherPlayers];
     const victim = allPlayers.find(p => p.id === victimId);
     const killer = allPlayers.find(p => p.id === killerId);
 
-    if (victim && victim.isAlive) {
-      victim.health -= damage;
-      if (victim.health <= 0) {
+    if (!victim || !killer || !victim.isAlive) return;
+
+    // The core fix: check for friendly fire BEFORE applying damage.
+    // A player cannot hit themselves, and players on the same team cannot hit each other.
+    if (victim.id === killer.id || victim.team === killer.team) {
+        return; // This is friendly fire or a self-hit, so we do nothing.
+    }
+
+    victim.health -= damage;
+
+    if (victim.health <= 0) {
         victim.health = 0;
         victim.isAlive = false;
-        if (killer && killer.team !== victim.team) {
-          killer.kills += 1;
-          if (killer.team === 'red') setGameState(prev => ({ ...prev, teamScores: { ...prev.teamScores, red: prev.teamScores.red + 1 } }));
-          else if (killer.team === 'blue') setGameState(prev => ({ ...prev, teamScores: { ...prev.teamScores, blue: prev.teamScores.blue + 1 } }));
+        
+        killer.kills += 1;
+        if (killer.team === 'red') {
+            setGameState(prev => ({ ...prev, teamScores: { ...prev.teamScores, red: prev.teamScores.red + 1 } }));
+        } else if (killer.team === 'blue') {
+            setGameState(prev => ({ ...prev, teamScores: { ...prev.teamScores, blue: prev.teamScores.blue + 1 } }));
         }
+        
         const respawnTimer = setTimeout(() => {
-          victim.health = victim.maxHealth;
-          victim.isAlive = true;
-          if (canvasRef.current) {
-            victim.x = Math.random() * canvasRef.current.width;
-            victim.y = Math.random() * canvasRef.current.height;
-            victim.targetX = victim.x;
-            victim.targetY = victim.y;
-          }
-          respawnTimeouts.current.delete(victimId);
+            victim.health = victim.maxHealth;
+            victim.isAlive = true;
+            if (canvasRef.current) {
+                victim.x = Math.random() * canvasRef.current.width;
+                victim.y = Math.random() * canvasRef.current.height;
+                victim.targetX = victim.x;
+                victim.targetY = victim.y;
+            }
+            respawnTimeouts.current.delete(victimId);
         }, 3000);
         respawnTimeouts.current.set(victimId, respawnTimer);
-      }
     }
   }, [isHost, setGameState, canvasRef]);
   
@@ -98,12 +113,15 @@ const useGameLoop = ({
     for (let i = bullets.length - 1; i >= 0; i--) {
       const bullet = bullets[i];
       for (const p of allPlayers) {
-        if (p.team !== bullet.team && p.isAlive) {
+        // Safer check: Explicitly prevent self-hits AND friendly fire.
+        // The bullet.team check ensures we don't evaluate when team data is missing.
+        if (p.id !== bullet.playerId && p.team !== bullet.team && p.isAlive && bullet.team) {
           const dist = Math.hypot(bullet.x - p.x, bullet.y - p.y);
           if (dist < p.size + bullet.size) {
+            // Report potential hit. Host will validate it in processHit.
             if (isHost) {
               processHit(p.id, bullet.playerId, bullet.damage || 10);
-            } else if (playerId === bullet.playerId) {
+            } else if (playerId === bullet.playerId) { // Client-side prediction for own shots
               channel?.send({
                 type: 'broadcast', event: 'player-hit',
                 payload: { victimId: p.id, killerId: bullet.playerId, damage: bullet.damage || 10 }
@@ -117,7 +135,10 @@ const useGameLoop = ({
     }
   }, [isHost, channel, processHit, playerId]);
 
-  // Input and Canvas Setup Effect (no changes)
+  // =================================================================
+  // END OF FIX
+  // =================================================================
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => { gameDataRef.current.keys[e.key.toLowerCase()] = true; };
     const handleKeyUp = (e: KeyboardEvent) => { gameDataRef.current.keys[e.key.toLowerCase()] = false; };
@@ -153,7 +174,6 @@ const useGameLoop = ({
     };
   }, [canvasRef]);
 
-  // Multiplayer Listeners Effect
   useEffect(() => {
     if (!isMultiplayer || !channel || !playerId) return;
 
@@ -170,12 +190,10 @@ const useGameLoop = ({
         const presences = presenceState[id] as any[];
         const pState = presences[0];
         if (pState.user_id !== playerId) {
-          // Check if player already exists
           const existingPlayer = gameDataRef.current.otherPlayers.find(p => p.id === pState.user_id);
           if (existingPlayer) {
-            newOtherPlayers.push(existingPlayer); // Keep existing object to preserve interpolation state
+            newOtherPlayers.push(existingPlayer);
           } else {
-            // Add a new player
             newOtherPlayers.push({
               id: pState.user_id, x: pState.x || 0, y: pState.y || 0,
               targetX: pState.x || 0, targetY: pState.y || 0,
@@ -193,16 +211,13 @@ const useGameLoop = ({
         if (!isHost) {
             gameDataRef.current.enemies = payload.payload.enemies;
 
-            // Update local state based on the authoritative state from the host
             payload.payload.players.forEach(networkPlayer => {
                 if (networkPlayer.id === playerId) {
-                    // Update our own player's state
                     const self = gameDataRef.current.player;
                     self.health = networkPlayer.health;
                     if (self.isAlive && !networkPlayer.isAlive) setIsSpectating(true);
                     if (!self.isAlive && networkPlayer.isAlive) {
                       setIsSpectating(false);
-                      // On respawn, snap to new position
                       self.x = networkPlayer.x;
                       self.y = networkPlayer.y;
                       self.targetX = networkPlayer.targetX;
@@ -211,19 +226,15 @@ const useGameLoop = ({
                     self.isAlive = networkPlayer.isAlive;
                     self.kills = networkPlayer.kills;
                 } else {
-                    // Find the corresponding local player
                     let otherPlayer = gameDataRef.current.otherPlayers.find(p => p.id === networkPlayer.id);
-
-                    // If player doesn't exist locally, create them (handles players joining mid-game)
                     if (!otherPlayer) {
                         otherPlayer = { ...networkPlayer };
                         gameDataRef.current.otherPlayers.push(otherPlayer);
                     } else {
-                        // Just update their stats, not position (handled by player-move)
                         otherPlayer.health = networkPlayer.health;
                         otherPlayer.isAlive = networkPlayer.isAlive;
                         otherPlayer.kills = networkPlayer.kills;
-                        if (!otherPlayer.isAlive && networkPlayer.isAlive) { // Respawned
+                        if (!otherPlayer.isAlive && networkPlayer.isAlive) { 
                            otherPlayer.x = networkPlayer.x;
                            otherPlayer.y = networkPlayer.y;
                            otherPlayer.targetX = networkPlayer.targetX;
